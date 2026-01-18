@@ -8,6 +8,11 @@ LABEL \
     io.hass.type="addon" \
     io.hass.version="2.1.3"
 
+# Setup debug logging for initialization
+ENV S6_VERBOSITY=2 \
+    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
+    BASHIO_DEBUG=true
+
 # Install build dependencies and runtime libraries in single layer
 RUN apk add --no-cache --virtual .build-deps \
     build-base \
@@ -84,7 +89,8 @@ RUN chmod 755 /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
     chmod 644 /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
     chmod 755 /etc/services.d/viessmann-decoder/run 2>/dev/null || true && \
-    chmod +x /init 2>/dev/null || true
+    ls -l /init && \
+    chmod +x /init
 
 # Create required directories
 RUN mkdir -p /data /tmp && \

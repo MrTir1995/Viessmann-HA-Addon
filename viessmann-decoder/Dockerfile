@@ -20,6 +20,17 @@ RUN apk add --no-cache --virtual .build-deps \
     curl \
     bash \
     jq
+
+# Set working directory for build
+WORKDIR /build
+
+# Copy source files with proper structure validation
+COPY linux/src /build/src/
+COPY linux/include /build/include/
+COPY src /build/library_src/
+COPY webserver /build/webserver/
+
+# Validate source files exist
 RUN test -f /build/library_src/vbusdecoder.cpp && \
     test -f /build/src/LinuxSerial.cpp && \
     test -f /build/src/Arduino.cpp && \

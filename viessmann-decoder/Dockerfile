@@ -111,6 +111,9 @@ RUN apk add --no-cache file && \
     ls -l $INTERP; \
     file $INTERP; \
     fi && \
+    echo "--- CHECKING S6-OVERLAY STRUCTURE ---" && \
+    ls -R /etc/s6-overlay | head -n 50 && \
+    ls -la /command || true && \
     echo "--- END DEBUG INFO ---"
 
 RUN test -x /usr/local/bin/viessmann_webserver && \

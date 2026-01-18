@@ -86,12 +86,12 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 
 # Optional: Prepare USB/IP Python-based client wrapper for remote USB forwarding
 RUN mkdir -p /usr/local/bin && \
-    cat > /usr/local/bin/usbip_client.sh << 'EOFSCRIPT'
-#!/bin/bash
-# USB/IP Client Wrapper - Uses nc/socat for fallback if usbip unavailable
-# This is a compatibility wrapper that attempts to connect to remote USB devices
+    cat > /usr/local/bin/usbip_client.sh << 'EOFSCRIPT' && \
+    #!/bin/bash
+    # USB/IP Client Wrapper - Uses nc/socat for fallback if usbip unavailable
+    # This is a compatibility wrapper that attempts to connect to remote USB devices
 
-REMOTE_HOST="$1"
+    REMOTE_HOST="$1"
 REMOTE_PORT="${2:-3240}"
 BUSID="$3"
 

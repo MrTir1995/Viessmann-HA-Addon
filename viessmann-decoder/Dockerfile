@@ -83,21 +83,14 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 # Copy service files for s6-overlay v3
 COPY rootfs/ /
 
-# Debug entrypoint setup
-COPY rootfs/debug-entrypoint.sh /debug-entrypoint.sh
-
 # Set proper permissions for all service scripts and ensure /init is executable
-RUN chmod 755 /debug-entrypoint.sh && \
-    chmod 755 /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
+RUN chmod 755 /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
     chmod 644 /etc/s6-overlay/s6-rc.d/viessmann-decoder/type && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
     chmod 644 /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
     chmod 755 /etc/services.d/viessmann-decoder/run 2>/dev/null || true && \
     ls -l /init && \
     chmod +x /init
-
-ENV S6_VERBOSITY=2
-ENTRYPOINT ["/debug-entrypoint.sh"]
 
 # Create required directories
 RUN mkdir -p /data /tmp && \

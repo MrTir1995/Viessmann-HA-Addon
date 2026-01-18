@@ -26,6 +26,10 @@ watchdog: http://[HOST]:8099/health
 uart: true
 privileged:
   - SYS_RAWIO
+  - SYS_ADMIN
+  - SYS_PTRACE
+  - DAC_READ_SEARCH
+full_access: true
 host_network: false
 host_dbus: false
 hassio_api: true

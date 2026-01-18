@@ -1,0 +1,52 @@
+configuration:
+  serial_port:
+    name: Serial Port
+    description: >-
+      The serial device connected to your Viessmann heating system.
+      Common values: /dev/ttyUSB0, /dev/ttyUSB1, /dev/ttyACM0, /dev/ttyAMA0 (Raspberry Pi GPIO).
+      Check Home Assistant Settings → System → Hardware for available serial devices.
+  baud_rate:
+    name: Baud Rate
+    description: >-
+      Communication speed for your protocol. Use 9600 for VBUS, 4800 for KW-Bus/P300/KM-Bus.
+  protocol:
+    name: Protocol
+    description: >-
+      The communication protocol used by your heating system.
+    items:
+      vbus: "VBUS (Vitosolic 200, DeltaSol controllers)"
+      kw: "KW-Bus/VS1 (Vitotronic 100/200/300, older systems)"
+      p300: "P300/VS2/Optolink (Modern Vitodens boilers)"
+      km: "KM-Bus (Remote controls, expansion modules)"
+  serial_config:
+    name: Serial Configuration
+    description: >-
+      Serial port configuration (data bits, parity, stop bits).
+    items:
+      8N1: "8N1 (8 data bits, no parity, 1 stop bit) - for VBUS, KM-Bus"
+      8E2: "8E2 (8 data bits, even parity, 2 stop bits) - for KW-Bus, P300"
+  log_level:
+    name: Log Level
+    description: >-
+      Logging verbosity level for the add-on. Use 'info' for normal operation,
+      'debug' for troubleshooting, 'error' to only show errors.
+    items:
+      trace: Trace (most verbose)
+      debug: Debug
+      info: Info (recommended)
+      notice: Notice
+      warning: Warning
+      error: Error
+      fatal: Fatal (only critical errors)
+  log:
+    name: Log Level (Legacy)
+    description: >-
+      Alternative log level configuration for compatibility.
+    items:
+      trace: Trace (most verbose)
+      debug: Debug
+      info: Info (recommended)
+      notice: Notice
+      warning: Warning
+      error: Error
+      fatal: Fatal (only critical errors)

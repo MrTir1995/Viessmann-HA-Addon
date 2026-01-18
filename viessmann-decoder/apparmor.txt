@@ -1,0 +1,73 @@
+#include <tunables/global>
+
+profile viessmann_decoder flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  
+  # Allow Home Assistant Supervisor communication
+  /run/supervisor.sock rw,
+
+  # Capabilities
+  capability net_admin,
+  capability sys_rawio,
+
+  # S6-Overlay v3 support
+  /run/s6/** rw,
+  /run/s6-rc/** rw,
+  /run/service/** rw,
+  /etc/s6-overlay/** r,
+  /command/** ix,
+  
+  # Bashio
+  /usr/** r,
+  /usr/bin/bashio rix,
+  /usr/lib/** rm,
+  /bin/** ix,
+  /sbin/** ix,
+  /lib/** rm,
+  
+  # Data access
+  /data/** rw,
+  
+  # Home Assistant config access (read-only)
+  /config/** r,
+  
+  # Serial device access - critical for Viessmann decoder
+  /dev/tty[A-Z]* rw,
+  /dev/ttyUSB* rw,
+  /dev/ttyACM* rw,
+  /dev/ttyAMA* rw,
+  /dev/serial/** rw,
+  
+  # Proc access for device detection
+  /proc/** r,
+  /sys/class/tty/** r,
+  /sys/devices/** r,
+  
+  # Standard addon locations
+  / r,
+  /usr/local/bin/viessmann_webserver rix,
+  /run.sh rix,
+  
+  # Temp files
+  /tmp/** rw,
+  
+  # Network access for webserver
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  
+  # Allow signal handling
+  signal (receive) set=(term, kill, usr1, usr2),
+  
+  # Dynamic libraries
+  /usr/lib/libmicrohttpd.so.* rm,
+  /usr/lib/libpthread*.so.* rm,
+  /usr/lib/libgcc_s.so.* rm,
+  /usr/lib/libstdc++.so.* rm,
+  
+  # DNS
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  /etc/nsswitch.conf r,
+}

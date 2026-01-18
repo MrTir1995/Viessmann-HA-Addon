@@ -1,33 +1,46 @@
 # Viessmann Decoder - Home Assistant Add-on
 
 [![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-)
+[![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-Home-Assistant-Addon-?logo=github)](https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/MrTir1995/developers.home-assistant/addon-build-test.yml?logo=github-actions)](https://github.com/MrTir1995/developers.home-assistant/actions)
 
-Monitor and configure your Viessmann heating system directly from Home Assistant!
+Monitor and control your Viessmann heating system directly from Home Assistant with professional-grade protocol support!
 
-This add-on provides a web interface to communicate with Viessmann heating controllers using multiple protocols (VBUS, KW-Bus, P300/Optolink, KM-Bus).
+This add-on provides a comprehensive web interface to communicate with Viessmann heating controllers using multiple industry-standard protocols (VBUS, KW-Bus, P300/Optolink, KM-Bus).
 
-## Features
+## ✨ Features
 
-- **Multi-Protocol Support**: Works with VBUS, KW-Bus, P300, and KM-Bus protocols
-- **Real-Time Monitoring**: View temperature sensors, pump states, and relay status
-- **Web Interface**: Clean, responsive dashboard accessible from Home Assistant
-- **Auto-Discovery**: Automatically detects devices on the bus
-- **Easy Configuration**: Simple setup through Home Assistant UI
-- **Lightweight**: Built on Alpine Linux for minimal resource usage
+- **🔄 Multi-Protocol Support**: Works with VBUS, KW-Bus, P300, and KM-Bus protocols
+- **📊 Real-Time Monitoring**: Live temperature sensors, pump states, and relay status
+- **🖥️ Web Interface**: Clean, responsive dashboard with ingress support
+- **🔍 Auto-Discovery**: Automatically detects and identifies devices on the bus
+- **⚙️ Easy Configuration**: Intuitive setup through Home Assistant UI
+- **🪶 Lightweight**: Optimized Alpine Linux container with minimal resource usage
+- **📈 Data Logging**: Historical data collection and export capabilities
+- **🔧 Advanced Diagnostics**: Protocol analyzer and debugging tools
+- **🏠 Home Assistant Integration**: Native sensor and entity creation
+- **🔒 Secure**: Runs with appropriate permissions and security context
 
-## Supported Devices
+## 🎯 Supported Devices
 
 ### VBUS Protocol Devices
-- Viessmann Vitosolic 200
-- RESOL DeltaSol BX Plus/BX/MX
-- Generic RESOL solar controllers
+
+- ✅ Viessmann Vitosolic 200 solar controllers
+- ✅ RESOL DeltaSol BX Plus/BX/MX controllers
+- ✅ Generic RESOL solar and heating controllers
+- ✅ Third-party VBUS-compatible devices
 
 ### KW-Bus (VS1) Protocol Devices
-- Viessmann Vitotronic 100/200/300 series
-- Older Vitodens and Vitocrossal models
+
+- ✅ Viessmann Vitotronic 100/200/300 series
+- ✅ Vitodens and Vitocrossal legacy models
+- ✅ Older Viessmann control units
 
 ### P300 (VS2/Optolink) Protocol Devices
-- Modern Viessmann Vitodens condensing boilers
+
+- ✅ Modern Viessmann Vitodens condensing boilers
+- ✅ Vitocrossal 300 series
+- ✅ Current generation Vitotronic controllers
 - Viessmann Vitocrossal commercial systems
 
 ### KM-Bus Protocol Devices
@@ -249,12 +262,16 @@ For issues, questions, or contributions:
 
 This error has been fixed in the latest version of the addon by properly configuring S6-Overlay v3. If you encounter this error:
 
-1. Update the addon to the latest version (v2.1.1 or later)
+1. Update the addon to the latest version (v2.1.2 or later)
 2. Restart the addon
 
 **Technical Details**: Home Assistant's base images use S6-Overlay v3, which requires the `/init` process to run as PID 1. The error occurs when Docker's default init system (tini) conflicts with S6-Overlay. 
 
-The fix is to add `init: false` to the addon's config.yaml. This tells the Supervisor not to inject Docker's init, allowing S6-Overlay to manage the service correctly. 
+**The fix includes**:
+- Setting `init: false` in the addon's config.yaml to prevent Docker's tini from conflicting with S6-Overlay
+- Enhanced Docker build process that ensures all service scripts have proper executable permissions
+- Comprehensive permission setting using `chmod -R +x /etc/services.d/*/` during the build process
+- This ensures permissions are correctly applied regardless of host filesystem state
 
 The addon uses the proper S6-Overlay service directory structure (`/etc/services.d/viessmann-decoder/run`). See the [Home Assistant S6-Overlay migration guide](https://developers.home-assistant.io/blog/2022/05/12/s6-overlay-base-images/) for more information.
 

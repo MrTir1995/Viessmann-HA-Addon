@@ -1,0 +1,123 @@
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+VBUSDecoder	KEYWORD1
+VBUSMqttClient	KEYWORD1
+VBUSDataLogger	KEYWORD1
+VBUSScheduler	KEYWORD1
+ProtocolType	KEYWORD1
+MqttConfig	KEYWORD1
+DataPoint	KEYWORD1
+DataStats	KEYWORD1
+ScheduleRule	KEYWORD1
+RuleType	KEYWORD1
+ActionType	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+loop		KEYWORD2
+begin		KEYWORD2
+getTemp		KEYWORD2
+getPump		KEYWORD2
+getRelay	KEYWORD2
+getTempNum	KEYWORD2
+getPumpNum	KEYWORD2
+getRelayNum	KEYWORD2
+getVbusStat	KEYWORD2
+isReady		KEYWORD2
+getProtocol	KEYWORD2
+getErrorMask	KEYWORD2
+getSystemTime	KEYWORD2
+getOperatingHours	KEYWORD2
+getHeatQuantity	KEYWORD2
+getSystemVariant	KEYWORD2
+
+# KM-Bus getters
+getKMBusBurnerStatus	KEYWORD2
+getKMBusMainPumpStatus	KEYWORD2
+getKMBusLoopPumpStatus	KEYWORD2
+getKMBusMode	KEYWORD2
+getKMBusBoilerTemp	KEYWORD2
+getKMBusHotWaterTemp	KEYWORD2
+getKMBusOutdoorTemp	KEYWORD2
+getKMBusSetpointTemp	KEYWORD2
+getKMBusDepartureTemp	KEYWORD2
+
+# Control commands
+setKMBusMode	KEYWORD2
+setKMBusSetpoint	KEYWORD2
+setKMBusEcoMode	KEYWORD2
+setKMBusPartyMode	KEYWORD2
+
+# MQTT methods
+connect		KEYWORD2
+disconnect	KEYWORD2
+isConnected	KEYWORD2
+publish		KEYWORD2
+publishAll	KEYWORD2
+publishTemperatures	KEYWORD2
+publishPumps	KEYWORD2
+publishRelays	KEYWORD2
+publishStatus	KEYWORD2
+publishHomeAssistantDiscovery	KEYWORD2
+setCallback	KEYWORD2
+
+# Data logger methods
+logNow		KEYWORD2
+clear		KEYWORD2
+pause		KEYWORD2
+resume		KEYWORD2
+isPaused	KEYWORD2
+getDataPointCount	KEYWORD2
+getDataPoint	KEYWORD2
+getStatistics	KEYWORD2
+getStatisticsLastHours	KEYWORD2
+exportCSV	KEYWORD2
+exportJSON	KEYWORD2
+
+# Scheduler methods
+addTimeRule	KEYWORD2
+addTemperatureRule	KEYWORD2
+addCallbackRule	KEYWORD2
+removeRule	KEYWORD2
+enableRule	KEYWORD2
+disableRule	KEYWORD2
+clearAllRules	KEYWORD2
+getRuleCount	KEYWORD2
+getRule		KEYWORD2
+checkRules	KEYWORD2
+executeRule	KEYWORD2
+setCurrentTime	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+PROTOCOL_VBUS	LITERAL1
+PROTOCOL_KW	LITERAL1
+PROTOCOL_P300	LITERAL1
+PROTOCOL_KM	LITERAL1
+
+# KM-Bus modes
+KMBUS_MODE_OFF	LITERAL1
+KMBUS_MODE_NIGHT	LITERAL1
+KMBUS_MODE_DAY	LITERAL1
+KMBUS_MODE_ECO	LITERAL1
+KMBUS_MODE_PARTY	LITERAL1
+
+# Rule types
+RULE_TIME_BASED	LITERAL1
+RULE_TEMPERATURE_BASED	LITERAL1
+RULE_CONDITION_BASED	LITERAL1
+
+# Action types
+ACTION_SET_MODE	LITERAL1
+ACTION_SET_SETPOINT	LITERAL1
+ACTION_ENABLE_ECO	LITERAL1
+ACTION_DISABLE_ECO	LITERAL1
+ACTION_ENABLE_PARTY	LITERAL1
+ACTION_DISABLE_PARTY	LITERAL1
+ACTION_CALLBACK	LITERAL1

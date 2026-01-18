@@ -1,0 +1,276 @@
+Handbuch zur Entwicklung von Home Assistant Add-ons: Architektur, Implementierung und fortgeschrittene Techniken
+1. Einführung in die Systemarchitektur und Philosophie
+1.1 Das Home Assistant Ökosystem: Eine architektonische Einordnung
+Home Assistant (HA) hat sich von einer monolithischen Python-Anwendung zu einem komplexen Ökosystem entwickelt, das in verschiedenen Betriebsmodi ausgeführt werden kann. Um die Rolle und die technische Notwendigkeit von Add-ons zu verstehen, ist eine Analyse der Installationsmethoden unerlässlich. Add-ons sind exklusiv für Home Assistant OS und Home Assistant Supervised Installationen verfügbar.
+In diesen Umgebungen fungiert der Supervisor als Orchestrator. Er ist ein spezialisierter Docker-Container, der volle Kontrolle über den Host und die Docker-Engine besitzt. Während "Integrationen" (Integrations) direkt im Python-Prozess des Home Assistant Core ausgeführt werden und somit dessen Ressourcen und Abhängigkeiten teilen, sind Add-ons vollständig isolierte, containerisierte Anwendungen. Sie laufen parallel zum Core und kommunizieren über definierte Schnittstellen.
+Diese Trennung ist architektonisch brillant: Sie erlaubt es, komplexe Drittanbietersoftware wie Datenbanken (MariaDB), Message Broker (Mosquitto) oder Medienserver (Plex) bereitzustellen, ohne die Stabilität der Hausautomatisierung zu gefährden. Wenn ein Add-on abstürzt, läuft das Lichtsystem weiter. Diese Entkopplung bedeutet jedoch für den Entwickler, dass er sich nicht in einer Python-Umgebung bewegt, sondern in der Welt von Docker, Linux-Systemadministration und Microservice-Architektur.
+1.2 Containerisierung als Basis
+Jedes Add-on ist technisch gesehen ein OCI-konformer Container (Open Container Initiative). Der Supervisor nutzt die Docker-API, um diese Container zu verwalten – vom Pull-Vorgang über das Netzwerk-Setup bis hin zum Ressourcen-Mapping. Ein entscheidendes Merkmal von Home Assistant ist die Unterstützung verschiedenster Hardware-Architekturen. Ein Add-on-Entwickler muss daher sicherstellen, dass sein Container nicht nur auf klassischen x86-64-Servern (amd64) läuft, sondern auch auf ARM-basierten Einplatinencomputern wie dem Raspberry Pi (aarch64, armv7).
+Die Basis-Images, die vom Home Assistant Team bereitgestellt werden (z.B. basierend auf Alpine Linux), sind hochgradig optimiert. Sie enthalten bereits essenzielle Werkzeuge wie bashio (eine Bibliothek für Interaktion mit dem Supervisor) und s6-overlay (ein Prozess-Manager), die für die korrekte Funktion eines Add-ons kritisch sind.
+1.3 Der Supervisor: Mehr als nur ein Manager
+Der Supervisor ist die Schnittstelle zur Außenwelt. Er injiziert Konfigurationsdaten in das Add-on, verwaltet persistente Datenbereiche (/data) und stellt APIs bereit. Ein oft übersehenes Detail ist die Sicherheitsarchitektur: Der Supervisor konfiguriert AppArmor-Profile, um die Rechte der Container einzuschränken, und stellt über das Ingress-Feature eine sichere Möglichkeit bereit, Web-Oberflächen von Add-ons in die Home Assistant UI einzubetten, ohne Ports am Host öffnen zu müssen.
+Die Entwicklung eines Add-ons bedeutet also faktisch die Entwicklung eines Docker-Containers, der spezifische Konventionen des Supervisors befolgt, um privilegierte Funktionen wie Hardware-Zugriff oder Audio-Ausgabe nutzen zu können.
+2. Anatomie eines Add-ons: Die Dateistruktur und Metadaten
+Ein funktionierendes Add-on erfordert eine strikte Einhaltung der Verzeichnisstruktur. Der Supervisor scannt Repositories rekursiv nach einer config.yaml oder config.json Datei, um ein Add-on zu identifizieren.
+2.1 Die config.yaml: Das zentrale Steuerinstrument
+Diese Datei definiert nicht nur Metadaten, sondern steuert das Verhalten des Containers auf Host-Ebene.
+Parameter
+Typ
+Beschreibung & Implikation
+name
+String
+Der Anzeigename im Store.
+version
+String
+Semantische Versionierung (z.B. 1.0.0). Jede Änderung hier triggert ein Update beim Nutzer.
+slug
+String
+Eine URL-freundliche, eindeutige ID. Diese wird Teil des Docker-Container-Namens und der Ingress-URL. Sie darf sich niemals ändern, da sonst Datenverlust droht.
+arch
+Liste
+Definiert kompatible Architekturen (armhf, armv7, aarch64, amd64, i386). Fehlt hier die Architektur des Nutzers, wird das Add-on ausgeblendet.
+startup
+String
+system (vor HA Core), services (parallel), application (nach HA Core), once (kein Daemon). Kritisch für Abhängigkeiten wie MQTT-Broker.
+boot
+String
+auto (Start bei Boot) oder manual. manual_only verhindert den Autostart durch Nutzer.
+init
+Bool
+Kritisch für S6 v3: Muss auf false gesetzt werden, um Konflikte mit dem Docker-Init-Prozess zu vermeiden. Sonst droht Fehler s6-overlay-suexec: fatal: can only run as pid 1.
+map
+Liste
+Bind-Mounts für Verzeichnisse wie config, ssl, share, media. Ermöglicht Datenaustausch zwischen Add-ons.
+ingress
+Bool
+Aktiviert das Ingress-Routing (Reverse Proxy durch Supervisor).
+privileged
+Liste
+Gewährt erweiterte Kernel-Rechte (z.B. NET_ADMIN, SYS_ADMIN). Sollte sparsam verwendet werden.
+
+2.2 Das Dockerfile: Konstruktion und Basis-Images
+Das Dockerfile instruiert den Builder. Ein "Geheimnis" für effiziente Builds ist die Nutzung der Build Arguments.
+ARG BUILD_FROM
+FROM $BUILD_FROM
+
+# Installieren von Paketen
+RUN apk add --no-cache python3 py3-pip
+
+# Kopieren der Skripte
+COPY rootfs /
+
+
+Das Argument BUILD_FROM wird vom Home Assistant Builder dynamisch gesetzt. Wenn der Builder das Add-on für einen Raspberry Pi 4 baut, injiziert er das Basis-Image ghcr.io/home-assistant/aarch64-base. Dies ermöglicht es, ein einziges Dockerfile für alle Architekturen zu verwenden.
+Tipp: Die offiziellen Base-Images (home-assistant/{arch}-base) enthalten bereits S6-Overlay und Bashio. Wer eigene Basis-Images (z.B. Debian Bullseye) nutzt, muss diese Tools manuell nachinstallieren und konfigurieren, was die Fehleranfälligkeit erhöht.
+2.3 Die build.yaml: Anweisungen für den Builder
+Diese Datei ist spezifisch für den Home Assistant Builder (CI/CD). Sie definiert, welches Basis-Image für welche Architektur verwendet werden soll.
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base:3.16"
+  amd64: "ghcr.io/home-assistant/amd64-base:3.16"
+args:
+  MY_VERSION: "1.2.3"
+
+
+Hier können auch Build-Argumente definiert werden, die im Dockerfile als ARG verfügbar sind.
+3. Konfigurationsmanagement: Schema und Validierung
+Ein Alleinstellungsmerkmal von HA Add-ons ist die automatische Generierung einer Konfigurations-UI basierend auf einem Schema.
+3.1 Das Schema-System
+In der config.yaml definieren Sie unter options Standardwerte und unter schema die Datentypen.
+Verfügbare Typen:
+str, bool, int, float: Standardtypen.
+password: Maskierte Eingabe im Frontend.
+email, url: Validierung des Formats.
+port: Validiert auf TCP/UDP Port-Bereich.
+device: Erlaubt die Auswahl eines Hardware-Gerätes (z.B. /dev/ttyUSB0).
+Fortgeschrittene Validierung mit match: Das Schema unterstützt Regex-Validierung.
+match(^(On|Off)$): Erzwingt spezifische Strings.
+int(0,100): Begrenzt Zahlenbereiche.
+Verschachtelte und Optionale Konfigurationen: Ein häufiges Problem ist die Abbildung komplexer JSON-Strukturen. Das Schema erlaubt Listen von Objekten.
+Beispiel:
+schema:
+  mqtt:
+    host: str
+    port: int
+  sensors:
+    - name: str
+      type: list(temp|humid)
+      calibration: float?
+Das Fragezeichen (float?) macht das Feld optional. Dies ist extrem nützlich, um Defaults im Code zu behandeln und die UI sauber zu halten.
+3.2 Zugriff auf Konfigurationen: Bashio vs. JQ
+Zur Laufzeit schreibt der Supervisor die Konfiguration nach /data/options.json. Der naive Ansatz wäre:
+HOST=$(jq -r '.mqtt.host' /data/options.json)
+
+
+Der empfohlene Weg ist die Nutzung von Bashio:
+HOST=$(bashio::config 'mqtt.host')
+
+
+Bashio behandelt fehlende Schlüssel sicher und bricht das Skript bei kritischen Fehlern ab, was "Silent Failures" verhindert.
+4. Prozessmanagement mit S6-Overlay V3
+Die Migration auf S6-Overlay v3 war ein bedeutender Schritt in der HA-Entwicklung und ist eine häufige Fehlerquelle für Entwickler, die alten Tutorials folgen.
+4.1 Die Evolution: Von V2 zu V3
+In V2 wurden Dienste einfach in /etc/services.d abgelegt. V3 führt ein komplexes Abhängigkeitsmanagement ein, ähnlich wie systemd. Die wichtigste Änderung: Init-System-Konflikt. Da V3 strikter ist, muss in der config.yaml zwingend init: false gesetzt werden, damit Docker nicht seinen eigenen Init-Prozess (Tini) als PID 1 startet.
+4.2 Verzeichnisstruktur und Services
+Die moderne Struktur für S6 v3 sieht wie folgt aus:
+/etc/s6-overlay/s6-rc.d/ Hier liegen die Service-Definitionen. Jeder Dienst bekommt einen Ordner.
+type: Datei mit Inhalt longrun (für Daemons) oder oneshot (für Init-Tasks).
+run: Das ausführbare Startskript.
+dependencies.d/: Ordner mit leeren Dateien, deren Namen die Abhängigkeiten sind (z.B. base).
+Beispiel: Ein Nginx-Dienst
+Verzeichnis: /etc/s6-overlay/s6-rc.d/nginx/
+Datei type: Inhalt longrun
+Datei run:
+#!/command/execlineb -P
+nginx -g "daemon off;"
+
+
+Datei dependencies.d/base: (leer)
+Damit dieser Dienst automatisch startet, muss er Teil des user-Bundles sein. Man erstellt dazu eine leere Datei: /etc/s6-overlay/s6-rc.d/user/contents.d/nginx.
+4.3 Fallstricke bei der Migration
+Ausführungsrechte: In V2 hat S6 oft fehlende Execute-Permissions (chmod +x) korrigiert. V3 tut dies nicht. Wenn das run-Skript nicht ausführbar ist, startet der Dienst nicht, oft ohne klare Fehlermeldung.
+AppArmor: S6 v3 nutzt neue Pfade (/run/service, /run/s6). Alte AppArmor-Profile blockieren diese oft, was zu "Permission Denied" Fehlern beim Start des Supervisors selbst führt.
+Legacy-Support: Es gibt einen Legacy-Modus, der /etc/services.d unterstützt. Dieser wird intern in s6-rc übersetzt, ist aber weniger flexibel bei Abhängigkeiten. Für neue Add-ons sollte direkt die s6-rc.d-Struktur genutzt werden.
+5. Bashio: Die Standardbibliothek für Entwickler
+Bashio ist mehr als nur ein Wrapper. Es ist eine umfassende Bibliothek für Logging, Netzwerk und Konfiguration.
+5.1 Integration
+Um Bashio zu nutzen, muss der Shebang des Skripts lauten:
+#!/usr/bin/with-contenv bashio
+
+
+Dies lädt die Umgebungsvariablen und Funktionen.
+5.2 Wichtige Funktionsgruppen
+Konfiguration und Daten
+bashio::config 'key': Liest Werte. Unterstützt Dot-Notation für verschachtelte Keys.
+bashio::fs.file_exists 'path': Prüft sicher auf Existenz.
+bashio::var.has_value 'var': Prüft, ob eine Variable leer ist.
+Logging (Supervisor-Konform)
+Diese Funktionen sorgen dafür, dass Logs im richtigen Format und mit Zeitstempeln in der UI erscheinen.
+bashio::log.info "Nachricht"
+bashio::log.warning "Warnung"
+bashio::log.error "Fehler"
+bashio::log.fatal "Kritischer Fehler" (oft gefolgt von bashio::exit.nok).
+Netzwerk und Warte-Funktionen
+Ein häufiges Problem ist, dass Dienste (wie Datenbanken) noch nicht bereit sind, wenn das Add-on startet.
+bashio::net.wait_for_url 'url': Wartet, bis eine URL erreichbar ist.
+bashio::net.wait_for_port 'host' 'port': Wartet auf einen TCP-Port.
+Supervisor API Interaktion
+Anstatt curl manuell mit Tokens zu füttern:
+bashio::api.supervisor 'GET' '/core/info': Ruft Informationen ab.
+bashio::services.available 'mqtt': Prüft, ob ein MQTT-Dienst verfügbar ist.
+bashio::services 'mqtt' 'host': Liest Verbindungsdaten direkt aus der internen Service-Registry.
+6. Netzwerkintegration: Ingress und WebSockets
+Ingress ist das "Killer-Feature" für UX. Es ermöglicht den Zugriff auf Web-UIs ohne Port-Forwarding.
+6.1 Das Ingress-Konzept
+Wird ingress: true gesetzt, weist der Supervisor dem Add-on einen Pfad zu: /api/hassio_ingress/{token}/. Der Browser des Nutzers kommuniziert nur mit dem Supervisor, dieser leitet den Traffic an das Add-on weiter. Das Add-on selbst läuft auf einem internen Port (oft 8099), der nicht nach außen exponiert sein muss.
+6.2 Nginx als Reverse Proxy
+Da viele Anwendungen absolute Pfade (/css/style.css) erwarten, aber nun unter einem Unterpfad laufen, ist fast immer ein Nginx nötig, um URLs umzuschreiben oder Header zu setzen.
+Beispielhafte Nginx-Konfiguration für Ingress:
+server {
+    listen 8099;
+    allow 172.30.32.2; # Nur Zugriff vom Supervisor erlauben!
+    deny all;
+
+    location / {
+        proxy_pass http://backend:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Ingress-Path $http_x_ingress_path;
+        # Wichtig für WebSockets:
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+
+Die Direktive allow 172.30.32.2 ist ein wichtiges Sicherheitsfeature: Sie stellt sicher, dass niemand im Netzwerk das Ingress-Interface direkt aufrufen kann, sondern nur der Supervisor.
+6.3 Das WebSocket-Problem
+WebSockets erfordern spezielle Header (Upgrade und Connection). Werden diese im Nginx nicht explizit gesetzt (proxy_set_header Upgrade $http_upgrade), schlägt der Handshake fehl und Anwendungen, die auf Realtime-Updates angewiesen sind (z.B. Terminal-Apps oder Dashboards), funktionieren nicht.
+7. Hardware-Zugriff und Audio
+7.1 Hardware-Beschleunigung (GPU)
+Für KI-Anwendungen (Frigate, Whisper) oder Video-Transcoding (Plex) ist GPU-Zugriff nötig. In der config.yaml können Geräte gemappt werden:
+devices:
+  - /dev/dri:/dev/dri
+  - /dev/kfd:/dev/kfd
+
+
+Ein spezifischer Trick für Intel-GPUs in Docker-Containern ist das Setzen der Umgebungsvariable LIBVA_DRIVER_NAME. Oft muss dieser explizit auf i965 oder iHD gesetzt werden, damit ffmpeg die Hardwarebeschleunigung (vaapi) nutzen kann. Ohne dies fällt das System auf Software-Encoding zurück und überlastet die CPU.
+7.2 PulseAudio Integration
+Home Assistant nutzt ein zentrales Audio-Management basierend auf PulseAudio. Add-ons sollten nicht direkt auf ALSA (/dev/snd) zugreifen, da dies das Gerät exklusiv sperren würde ("Device busy"). Durch Setzen von audio: true in der config.yaml mountet der Supervisor den PulseAudio-Socket in den Container. In der Anwendung muss dann oft die Umgebungsvariable PULSE_SERVER auf den Socket-Pfad zeigen (wird meist automatisch gesetzt). Anwendungen, die nur ALSA sprechen, können über das alsa-plugins-pulse Paket auf den Pulse-Server umgeleitet werden.
+8. Sicherheit: AppArmor und Berechtigungen
+8.1 AppArmor-Profile
+AppArmor ist die zweite Verteidigungslinie. Standardmäßig blockiert es viele Operationen (z.B. mount). Wenn ein Add-on tiefere Systemeingriffe benötigt, kann ein Profil apparmor.txt im Repository abgelegt werden. Ein häufiges Problem bei der Entwicklung ist, dass Logs "Permission denied" zeigen, obwohl der User root ist. Dies ist fast immer AppArmor. Ein Blick in dmesg auf dem Host zeigt die "DENIED"-Meldungen. Für S6 v3 müssen Profile angepasst werden, um Zugriff auf /run/s6 zu gewähren.
+8.2 Secrets und Umgebungsvariablen
+Ein wenig bekanntes Feature für Entwickler ist die Nutzung von !secret in der build.yaml oder config.yaml, um Credentials während des Builds nicht ins Git zu committen. Zur Laufzeit gibt es undokumentierte Umgebungsvariablen:
+SUPERVISOR_TOKEN: Dieser Token erlaubt den Zugriff auf die Supervisor-API. Er ist nur vorhanden, wenn hassio_api: true in der Config gesetzt ist. Ohne dieses Flag schlagen API-Aufrufe mit 401 Unauthorized fehl.
+9. Der Build-Workflow: CI/CD und GitHub Actions
+Die manuelle Erstellung von Multi-Arch-Images ist fehleranfällig. Der Goldstandard ist die Nutzung von GitHub Actions mit dem offiziellen Home Assistant Builder.
+9.1 Der Builder-Workflow
+Der Builder ist ein Docker-Container, der QEMU nutzt, um ARM-Images auf x86-Runnern (GitHub Actions) zu bauen.
+Beispiel-Workflow (.github/workflows/builder.yaml):
+name: Build Add-on
+on:
+  push:
+    branches: ["main"]
+  release:
+    types: ["published"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASS }}
+      - name: Build
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --all \
+            --target /data/my-addon \
+            --image "myuser/my-addon-{arch}" \
+            --docker-hub "myuser"
+
+
+Der Parameter --all weist den Builder an, Images für alle in config.yaml definierten Architekturen zu bauen. Der Platzhalter {arch} im Image-Namen wird automatisch ersetzt (z.B. my-addon-amd64).
+9.2 Caching und Performance
+Der Builder unterstützt Caching, um Builds zu beschleunigen. Da Cross-Compilation (QEMU) langsam ist, ist dies essenziell. Die Option --cache-tag kann genutzt werden, um Zwischen-Layer zu speichern.
+10. Repository-Management und Veröffentlichung
+Um Add-ons zu verteilen, benötigt man ein GitHub-Repository.
+10.1 repository.yaml
+Im Root des Repos muss eine repository.yaml liegen.
+name: Mein Super Repo
+url: https://github.com/meinuser/meinrepo
+maintainer: Mein Name <email@example.com>
+
+
+Diese Datei wird vom Supervisor gelesen, wenn ein Nutzer das Repo hinzufügt. Jedes Unterverzeichnis im Repo, das eine config.yaml enthält, wird als Add-on erkannt.
+10.2 Kanäle (Channels)
+Ein Profi-Trick für Release-Management ist die Nutzung von Branches als Kanäle.
+Branch main: Stabile Versionen.
+Branch edge: Beta-Versionen / Nightly Builds. Nutzer können dann https://github.com/user/repo#edge hinzufügen, um den Beta-Kanal zu abonnieren. Dies ermöglicht es, Updates an eine kleine Gruppe zu verteilen, ohne die stabile Basis zu gefährden.
+11. Debugging und "Geheimtipps"
+11.1 Lokales Debugging
+Der Entwicklungszyklus "Code ändern -> Push -> CI Build -> Update in HA" ist zu langsam. Lösung: Lokale Add-ons.
+Erstellen Sie einen Ordner addons/local/my-addon auf Ihrem HA-System (via Samba/SSH).
+Kopieren Sie Ihren Code dort hinein.
+Im Add-on Store "Nach Updates suchen" klicken. Das lokale Add-on erscheint.
+Nach Code-Änderungen muss das Add-on neu gebaut werden (Button "Rebuild" im Add-on Panel), ein einfacher Neustart reicht nicht, da das Docker-Image neu erstellt werden muss.
+11.2 Watchdog und Healthchecks
+Add-ons können einfrieren, ohne abzustürzen. Nutzen Sie HEALTHCHECK im Dockerfile:
+HEALTHCHECK --interval=60s CMD curl -f http://localhost:8099/ |
+
+| exit 1
+
+
+Aktivieren Sie dann den "Watchdog" in der HA-UI. Der Supervisor überwacht den Health-Status und startet den Container bei Bedarf neu.
+11.3 Zugriff auf Host-Dienste
+Manchmal muss ein Add-on auf Dienste des Hosts zugreifen (z.B. DBus). Setzen Sie host_dbus: true in der Config. Dies ist notwendig für Add-ons, die Bluetooth oder andere Hardware-Events überwachen müssen. Ein weiterer Trick ist host_network: true, um den Netzwerk-Isolation-Layer zu umgehen – nützlich für Discovery-Protokolle wie mDNS oder UPnP, die über NAT-Grenzen hinweg oft nicht funktionieren.
+11.4 Der hassio_role Parameter
+Standardmäßig haben Add-ons kaum Rechte an der Supervisor-API. Mit hassio_role: manager oder admin können Add-ons jedoch mächtige Dinge tun, wie z.B. andere Add-ons installieren, Backups erstellen oder das Host-System neu starten. Dies sollte mit extremer Vorsicht genutzt werden, ermöglicht aber Management-Add-ons.
+12. Fazit
+Die Entwicklung von Home Assistant Add-ons ist eine Disziplin, die tiefes Wissen über Docker, Linux-Systeme und die spezifische Architektur des Supervisors erfordert. Der Schlüssel zum Erfolg liegt in der korrekten Handhabung des Prozessmanagements (S6-Overlay v3), der sauberen Definition von Schnittstellen (Config-Schema, Ingress) und der Automatisierung des Build-Prozesses. Mit den hier dargelegten Techniken – insbesondere der Nutzung von Bashio und der korrekten Integration von Hardware-Ressourcen – lassen sich robuste, professionelle Erweiterungen erstellen, die sich nahtlos in das Smart Home integrieren.
+Quellenangaben
+1. Home Assistant Add-ons, https://www.home-assistant.io/addons/ 2. Integration architecture | Home Assistant Developer Docs, https://developers.home-assistant.io/docs/a

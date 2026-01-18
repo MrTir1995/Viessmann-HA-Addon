@@ -1,0 +1,65 @@
+#!/command/with-contenv bashio
+# ==============================================================================
+# Viessmann Decoder Service - s6-overlay run script
+# ==============================================================================
+
+# Set log level from configuration
+if bashio::config.has_value 'log_level'; then
+    bashio::log.level "$(bashio::config 'log_level')"
+elif bashio::config.has_value 'log'; then
+    bashio::log.level "$(bashio::config 'log')"
+fi
+
+# Read configuration from Home Assistant
+SERIAL_PORT=$(bashio::config 'serial_port')
+BAUD_RATE=$(bashio::config 'baud_rate')
+PROTOCOL=$(bashio::config 'protocol')
+SERIAL_CONFIG=$(bashio::config 'serial_config')
+
+# Set defaults for missing configuration
+if ! bashio::var.has_value "${SERIAL_PORT}"; then
+    bashio::log.warning "Serial port not configured, using default /dev/ttyUSB0"
+    SERIAL_PORT="/dev/ttyUSB0"
+fi
+
+if ! bashio::var.has_value "${BAUD_RATE}"; then
+    bashio::log.warning "Baud rate not configured, using default 9600"
+    BAUD_RATE="9600"
+fi
+
+if ! bashio::var.has_value "${PROTOCOL}"; then
+    bashio::log.warning "Protocol not configured, using default vbus"
+    PROTOCOL="vbus"
+fi
+
+if ! bashio::var.has_value "${SERIAL_CONFIG}"; then
+    bashio::log.warning "Serial config not configured, using default 8N1"
+    SERIAL_CONFIG="8N1"
+fi
+
+bashio::log.info "======================================"
+bashio::log.info "  Viessmann Decoder Add-on Starting"
+bashio::log.info "======================================"
+bashio::log.info "Serial Port: ${SERIAL_PORT}"
+bashio::log.info "Baud Rate: ${BAUD_RATE}"
+bashio::log.info "Protocol: ${PROTOCOL}"
+bashio::log.info "Serial Config: ${SERIAL_CONFIG}"
+bashio::log.info "Web Port: 8099"
+
+# Check serial port availability (informational only)
+if bashio::fs.file_exists "${SERIAL_PORT}"; then
+    bashio::log.info "Serial port ${SERIAL_PORT} found"
+else
+    bashio::log.warning "Serial port ${SERIAL_PORT} not found"
+    bashio::log.warning "Web interface will show 'Serial port not connected'"
+fi
+
+bashio::log.info "Starting webserver on port 8099..."
+
+# Run the webserver with exec for proper signal handling
+exec /usr/local/bin/viessmann_webserver \
+    -p "${SERIAL_PORT}" \
+    -b "${BAUD_RATE}" \
+    -t "${PROTOCOL}" \
+    -c "${SERIAL_CONFIG}" \
+    -w 8099

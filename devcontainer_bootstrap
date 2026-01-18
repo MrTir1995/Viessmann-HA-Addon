@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -e
+
+# Install bashio if not present
+if ! command -v bashio &> /dev/null; then
+    echo "Installing bashio..."
+    apk add --no-cache bash jq curl
+    curl -J -L -o /tmp/bashio.tar.gz \
+        "https://github.com/hassio-addons/bashio/archive/refs/tags/v0.16.2.tar.gz"
+    mkdir -p /tmp/bashio
+    tar zxvf /tmp/bashio.tar.gz --strip 1 -C /tmp/bashio
+    mv /tmp/bashio/lib /usr/lib/bashio
+    ln -s /usr/lib/bashio/bashio /usr/bin/bashio
+fi
+
+# Symlink addon to addons directory
+mkdir -p /addons/local
+if [ ! -L /addons/local/viessmann_decoder ]; then
+    ln -sf /workspace/viessmann-decoder /addons/local/viessmann_decoder
+    echo "Addon linked to /addons/local/viessmann_decoder"
+fi
+
+# Reload addons
+ha addons reload 2>/dev/null || true
+
+echo ""
+echo "Dev Container is ready!"
+echo ""
+echo "Available commands:"
+echo "  ha addons                  - Manage addons"
+echo "  ha supervisor              - Supervisor information"
+echo "  supervisor_reload          - Reload supervisor"
+echo ""
+echo "Use VS Code tasks (Ctrl+Shift+P -> Tasks: Run Task) to:"
+echo "  - Build Addon"
+echo "  - Install Addon"
+echo "  - Start/Stop/Restart Addon"
+echo "  - View Addon Logs"
+echo ""
+echo "Home Assistant is available at: http://localhost:7123"
+echo ""

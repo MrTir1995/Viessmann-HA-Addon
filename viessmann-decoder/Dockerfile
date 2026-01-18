@@ -52,7 +52,7 @@ RUN cd src && \
 
 # Build the webserver application with full optimization
 RUN cd webserver && \
-    g++ -std=c++17 -O3 -march=native -mtune=native -flto -Wall -Wextra \
+    g++ -std=c++17 -O2 -Wall -Wextra \
     -o /usr/local/bin/viessmann_webserver \
     main.cpp \
     ../library_src/vbusdecoder.o \

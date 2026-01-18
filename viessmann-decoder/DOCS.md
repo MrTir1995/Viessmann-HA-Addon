@@ -36,7 +36,7 @@ This add-on enables monitoring and data collection from Viessmann heating system
 ### Options
 
 | Option | Description | Default |
-|--------|-------------|---------|
+| ------ | ----------- | ------- |
 | `serial_port` | Serial port for connection | `/dev/ttyUSB0` |
 | `baud_rate` | Communication speed | `9600` |
 | `protocol` | Protocol type | `vbus` |
@@ -69,6 +69,7 @@ This add-on enables monitoring and data collection from Viessmann heating system
 ### Wiring
 
 Connect your USB adapter to the appropriate bus port on your Viessmann controller:
+
 - GND → Ground
 - RX → Data line (TX on adapter)
 - TX → Data line (RX on adapter)
@@ -84,7 +85,7 @@ Or use the **Ingress** panel directly in Home Assistant.
 ### API Endpoints
 
 | Endpoint | Description |
-|----------|-------------|
+| -------- | ----------- |
 | `/` | Main dashboard |
 | `/data` | JSON data endpoint |
 | `/health` | Health check endpoint |
@@ -130,7 +131,7 @@ Or use the **Ingress** panel directly in Home Assistant.
 ## Support
 
 For issues and feature requests, visit:
-https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-/issues
+<https://github.com/MrTir1995/Viessmann-HA-Addon/issues>
 
 [aarch64-shield]: https://img.shields.io/badge/aarch64-yes-green.svg
 [amd64-shield]: https://img.shields.io/badge/amd64-yes-green.svg

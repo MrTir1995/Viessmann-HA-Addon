@@ -8,7 +8,7 @@ arch:
   - aarch64
   - amd64
   - i386
-url: https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-
+url: https://github.com/MrTir1995/Viessmann-HA-Addon
 startup: application
 boot: auto
 map:
@@ -32,7 +32,7 @@ hassio_api: true
 hassio_role: default
 init: false
 stage: stable
-image: ghcr.io/mrtir1995/{arch}-addon-viessmann-decoder
+image: ghcr.io/mrtir1995/viessmann-decoder-{arch}
 options:
   serial_port: /dev/ttyUSB0
   baud_rate: 9600

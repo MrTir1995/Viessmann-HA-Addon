@@ -1,18 +1,24 @@
-name: "Publish"
+name: Builder
 
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  publish:
-    name: Publish
+  build:
+    name: Test build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
+    strategy:
+      matrix:
+        arch: [amd64, aarch64, armhf, armv7, i386]
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v4
@@ -24,10 +30,11 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push all architectures
+      - name: Build ${{ matrix.arch }}
         uses: home-assistant/builder@2025.11.0
         with:
           args: |
-            --all \
+            --test \
+            --${{ matrix.arch }} \
             --target viessmann-decoder \
             --docker-hub ghcr.io/${{ github.repository_owner }}

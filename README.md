@@ -238,8 +238,8 @@ automation:
 ## Support
 
 For issues, questions, or contributions:
-- GitHub: https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-
-- Issues: https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-/issues
+- GitHub: https://github.com/MrTir1995/Viessmann-HA-Addon
+- Issues: https://github.com/MrTir1995/Viessmann-HA-Addon/issues
 
 ## Troubleshooting
 

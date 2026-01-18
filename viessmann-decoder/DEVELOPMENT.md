@@ -98,7 +98,7 @@ docker buildx build \
 1. Navigate to Settings → Add-ons → Add-on Store
 2. Click the three dots (⋮) in the top right
 3. Select "Repositories"
-4. Add: `https://github.com/MrTir1995/Viessmann-decoder-library`
+4. Add: `https://github.com/MrTir1995/Viessmann-HA-Addon`
 5. Find "Viessmann Decoder" in the add-on store
 6. Click Install
 

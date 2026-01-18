@@ -1,8 +1,8 @@
 # Viessmann Decoder - Home Assistant Add-on
 
-[![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-)
-[![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-Home-Assistant-Addon-?logo=github)](https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/MrTir1995/developers.home-assistant/addon-build-test.yml?logo=github-actions)](https://github.com/MrTir1995/developers.home-assistant/actions)
+[![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-HA-Addon)
+[![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-HA-Addon?logo=github)](https://github.com/MrTir1995/Viessmann-HA-Addon/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/MrTir1995/Viessmann-HA-Addon/test.yml?logo=github-actions)](https://github.com/MrTir1995/Viessmann-HA-Addon/actions)
 
 Monitor and control your Viessmann heating system directly from Home Assistant with professional-grade protocol support!
 
@@ -218,7 +218,7 @@ Enable debug logging by adding to configuration:
 ### Getting Help
 
 1. Check the [documentation repository](../doc/) for detailed guides
-2. Review existing [GitHub issues](https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-/issues)
+2. Review existing [GitHub issues](https://github.com/MrTir1995/Viessmann-HA-Addon/issues)
 3. Create a new issue with:
    - Add-on configuration
    - Hardware setup details

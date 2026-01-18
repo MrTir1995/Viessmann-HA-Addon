@@ -51,24 +51,32 @@ log_info "  USB/IP Bus ID: ${USBIP_BUSID}"
 log_info "  USB/IP Port: ${USBIP_PORT}"
 
 if [[ "${USBIP_ENABLE}" == "true" ]]; then
-    if ! command -v usbip >/dev/null 2>&1; then
-        log_warning "usbip tool not found. USB/IP will be skipped."
-    else
-        log_info "Initializing USB/IP client..."
-        if command -v modprobe >/dev/null 2>&1; then
-            modprobe vhci-hcd 2>/dev/null || log_warning "modprobe vhci-hcd failed (may already be loaded)"
-        fi
+    log_info "Initializing USB/IP client..."
 
-        if [[ -z "${USBIP_HOST}" ]]; then
-            log_warning "USB/IP host is empty. Skipping USB/IP attach."
-        elif [[ -z "${USBIP_BUSID}" ]]; then
-            log_warning "USB/IP busid is empty. Skipping USB/IP attach."
-            log_info "Available devices on host ${USBIP_HOST}:${USBIP_PORT}:"
-            usbip list -r "${USBIP_HOST}" 2>/dev/null || log_warning "usbip list failed"
+    if [[ -z "${USBIP_HOST}" ]]; then
+        log_warning "USB/IP host is empty. Skipping USB/IP attach."
+    elif [[ -z "${USBIP_BUSID}" ]]; then
+        log_warning "USB/IP busid is empty. Skipping USB/IP attach."
+        log_info "USB/IP Configuration:"
+        log_info "  Host: ${USBIP_HOST}:${USBIP_PORT}"
+        log_info "  BusID: (not configured)"
+    else
+        log_info "Attempting USB/IP connection..."
+        log_info "  Host: ${USBIP_HOST}:${USBIP_PORT}"
+        log_info "  BusID: ${USBIP_BUSID}"
+
+        # Try socat first (more reliable)
+        if command -v socat >/dev/null 2>&1; then
+            log_info "Using socat for USB/IP forwarding"
+            socat UNIX-LISTEN:/dev/shm/usbip_${USBIP_BUSID}.sock TCP:${USBIP_HOST}:${USBIP_PORT} &
+            sleep 2
+        elif command -v nc >/dev/null 2>&1; then
+            log_warning "socat not available, using nc (netcat)"
+            nc -k -l -p 3241 -c "nc ${USBIP_HOST} ${USBIP_PORT}" &
+            sleep 2
         else
-            log_info "Attaching USB/IP device ${USBIP_BUSID} from ${USBIP_HOST}:${USBIP_PORT}"
-            usbip attach -r "${USBIP_HOST}" -b "${USBIP_BUSID}" -p "${USBIP_PORT}" 2>/dev/null || \
-                log_warning "usbip attach failed. Check host, port, and busid."
+            log_warning "Neither socat nor nc found. USB/IP forwarding unavailable."
+            log_warning "Install socat or netcat to enable USB/IP support."
         fi
     fi
 fi

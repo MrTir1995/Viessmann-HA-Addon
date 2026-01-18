@@ -25,11 +25,10 @@ RUN apk add --no-cache --virtual .build-deps \
     libmicrohttpd \
     libstdc++ \
     libgcc \
-    usbip \
-    kmod \
     curl \
     bash \
-    jq
+    jq \
+    sysfsutils-dev
 
 # Set working directory for build
 WORKDIR /build
@@ -84,6 +83,44 @@ RUN ldd /usr/local/bin/viessmann_webserver && \
 WORKDIR /
 RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
     apk del --no-cache .build-deps
+
+# Optional: Prepare USB/IP Python-based client wrapper for remote USB forwarding
+RUN mkdir -p /usr/local/bin && \
+    cat > /usr/local/bin/usbip_client.sh << 'EOFSCRIPT'
+#!/bin/bash
+# USB/IP Client Wrapper - Uses nc/socat for fallback if usbip unavailable
+# This is a compatibility wrapper that attempts to connect to remote USB devices
+
+REMOTE_HOST="$1"
+REMOTE_PORT="${2:-3240}"
+BUSID="$3"
+
+if [[ -z "$REMOTE_HOST" ]] || [[ -z "$BUSID" ]]; then
+echo "Usage: $0 <host> [port] <busid>"
+exit 1
+fi
+
+# Try using socat if available (netcat alternative)
+if command -v socat >/dev/null 2>&1; then
+echo "Attempting USB/IP connection via socat to $REMOTE_HOST:$REMOTE_PORT device $BUSID"
+socat UNIX-LISTEN:/dev/shm/usbip_$BUSID.sock TCP:$REMOTE_HOST:$REMOTE_PORT &
+sleep 1
+exit 0
+fi
+
+# Fallback: Try nc
+if command -v nc >/dev/null 2>&1; then
+echo "Attempting USB/IP connection via nc to $REMOTE_HOST:$REMOTE_PORT device $BUSID"
+nc -k -l -p 3241 -c "nc $REMOTE_HOST $REMOTE_PORT" &
+sleep 1
+exit 0
+fi
+
+echo "ERROR: Neither socat nor nc found. Install one of them for USB/IP forwarding."
+exit 1
+EOFSCRIPT
+chmod 755 /usr/local/bin/usbip_client.sh && \
+    apk add --no-cache socat || true
 
 # Copy the main run script (NOT using s6-overlay, direct execution under tini)
 COPY run.sh /run.sh

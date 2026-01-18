@@ -45,7 +45,9 @@ profile viessmann_decoder flags=(attach_disconnected,mediate_deleted) {
 
   # Standard addon locations
   / r,
-  /init rix,
+  /init ux,
+  /bin/bash ux,
+  /bin/sh ux,
   /usr/local/bin/viessmann_webserver rix,
   /run.sh rix,
 

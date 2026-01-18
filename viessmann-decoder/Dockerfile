@@ -97,6 +97,22 @@ RUN mkdir -p /data /tmp && \
     chmod 755 /data /tmp
 
 # Validate final setup
+RUN apk add --no-cache file && \
+    echo "--- DEBUG INFO FOR /init ---" && \
+    ls -l /init && \
+    stat /init && \
+    file /init && \
+    echo "--- CHECKING INTERPRETER (if script) ---" && \
+    if [ -f /init ]; then head -n 1 /init; fi && \
+    echo "--- CHECKING SHEBANG INTERPRETER ---" && \
+    if [ "$(head -n 1 /init | egrep '^#!')" ]; then \
+    INTERP=$(head -n 1 /init | sed 's/^#!//' | awk '{print $1}'); \
+    echo "Interpreter is: $INTERP"; \
+    ls -l $INTERP; \
+    file $INTERP; \
+    fi && \
+    echo "--- END DEBUG INFO ---"
+
 RUN test -x /usr/local/bin/viessmann_webserver && \
     test -x /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
     test -f /etc/s6-overlay/s6-rc.d/viessmann-decoder/type

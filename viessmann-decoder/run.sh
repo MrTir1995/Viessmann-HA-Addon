@@ -1,4 +1,4 @@
-#!/command/with-contenv bashio
+#!/usr/bin/env bashio
 
 # Set log level from configuration (check both 'log_level' and 'log' for compatibility)
 if bashio::config.has_value 'log_level'; then

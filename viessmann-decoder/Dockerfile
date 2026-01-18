@@ -80,45 +80,17 @@ WORKDIR /
 RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
     apk del --no-cache .build-deps
 
-# Copy service files for s6-overlay v3
-COPY rootfs/ /
-
-# Set proper permissions for all service scripts and ensure /init is executable
-RUN chmod 755 /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
-    chmod 644 /etc/s6-overlay/s6-rc.d/viessmann-decoder/type && \
-    touch /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
-    chmod 644 /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
-    chmod 755 /etc/services.d/viessmann-decoder/run 2>/dev/null || true && \
-    ls -l /init && \
-    chmod +x /init
+# Copy the main run script (NOT using s6-overlay, direct execution under tini)
+COPY run.sh /run.sh
+RUN chmod 755 /run.sh
 
 # Create required directories
 RUN mkdir -p /data /tmp && \
     chmod 755 /data /tmp
 
 # Validate final setup
-RUN apk add --no-cache file && \
-    echo "--- DEBUG INFO FOR /init ---" && \
-    ls -l /init && \
-    stat /init && \
-    file /init && \
-    echo "--- CHECKING INTERPRETER (if script) ---" && \
-    if [ -f /init ]; then head -n 1 /init; fi && \
-    echo "--- CHECKING SHEBANG INTERPRETER ---" && \
-    if [ "$(head -n 1 /init | egrep '^#!')" ]; then \
-    INTERP=$(head -n 1 /init | sed 's/^#!//' | awk '{print $1}'); \
-    echo "Interpreter is: $INTERP"; \
-    ls -l $INTERP; \
-    file $INTERP; \
-    fi && \
-    echo "--- CHECKING S6-OVERLAY STRUCTURE ---" && \
-    ls -R /etc/s6-overlay | head -n 50 && \
-    ls -la /command || true && \
-    echo "--- END DEBUG INFO ---"
-
 RUN test -x /usr/local/bin/viessmann_webserver && \
-    test -x /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
-    test -f /etc/s6-overlay/s6-rc.d/viessmann-decoder/type
+    test -x /run.sh
 
 # Health check to monitor webserver availability
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
@@ -127,5 +99,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
 # Expose web interface port
 EXPOSE 8099
 
-# S6-Overlay v3 init system will automatically start services
+# Direct execution - HA Supervisor uses tini as PID 1, then runs CMD
+CMD ["/run.sh"]
 # Base image provides /init as entrypoint

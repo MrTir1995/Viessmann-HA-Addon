@@ -27,7 +27,7 @@ This add-on enables monitoring and data collection from Viessmann heating system
 1. Navigate to **Supervisor > Add-on Store** in Home Assistant
 2. Click the three dots in the top right corner
 3. Select **Repositories**
-4. Add this repository URL: `https://github.com/MrTir1995/Viessmann-Home-Assistant-Addon-`
+4. Add this repository URL: `https://github.com/MrTir1995/Viessmann-HA-Addon`
 5. Click **Add**, then close
 6. Find "Viessmann Decoder" in the add-on list and click **Install**
 

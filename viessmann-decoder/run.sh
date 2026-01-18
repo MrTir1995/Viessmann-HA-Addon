@@ -10,7 +10,7 @@ log_warning() { echo "[WARNING] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
 log_info "======================================"
-log_info " Viessmann Decoder Add-on v2.1.3"
+log_info " Viessmann Decoder Add-on v2.1.5"
 log_info "======================================"
 
 # Read configuration from options.json
@@ -22,6 +22,10 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     PROTOCOL=$(jq -r '.protocol // "vbus"' "${CONFIG_FILE}")
     SERIAL_CONFIG=$(jq -r '.serial_config // "8N1"' "${CONFIG_FILE}")
     LOG_LEVEL=$(jq -r '.log_level // "info"' "${CONFIG_FILE}")
+    USBIP_ENABLE=$(jq -r '.usbip_enable // false' "${CONFIG_FILE}")
+    USBIP_HOST=$(jq -r '.usbip_host // ""' "${CONFIG_FILE}")
+    USBIP_BUSID=$(jq -r '.usbip_busid // ""' "${CONFIG_FILE}")
+    USBIP_PORT=$(jq -r '.usbip_port // 3240' "${CONFIG_FILE}")
 else
     log_warning "Config file not found, using defaults"
     SERIAL_PORT="/dev/ttyUSB0"
@@ -29,6 +33,10 @@ else
     PROTOCOL="vbus"
     SERIAL_CONFIG="8N1"
     LOG_LEVEL="info"
+    USBIP_ENABLE="false"
+    USBIP_HOST=""
+    USBIP_BUSID=""
+    USBIP_PORT="3240"
 fi
 
 log_info "Configuration:"
@@ -37,6 +45,33 @@ log_info "  Baud Rate: ${BAUD_RATE}"
 log_info "  Protocol: ${PROTOCOL}"
 log_info "  Serial Config: ${SERIAL_CONFIG}"
 log_info "  Log Level: ${LOG_LEVEL}"
+log_info "  USB/IP Enabled: ${USBIP_ENABLE}"
+log_info "  USB/IP Host: ${USBIP_HOST}"
+log_info "  USB/IP Bus ID: ${USBIP_BUSID}"
+log_info "  USB/IP Port: ${USBIP_PORT}"
+
+if [[ "${USBIP_ENABLE}" == "true" ]]; then
+    if ! command -v usbip >/dev/null 2>&1; then
+        log_warning "usbip tool not found. USB/IP will be skipped."
+    else
+        log_info "Initializing USB/IP client..."
+        if command -v modprobe >/dev/null 2>&1; then
+            modprobe vhci-hcd 2>/dev/null || log_warning "modprobe vhci-hcd failed (may already be loaded)"
+        fi
+
+        if [[ -z "${USBIP_HOST}" ]]; then
+            log_warning "USB/IP host is empty. Skipping USB/IP attach."
+        elif [[ -z "${USBIP_BUSID}" ]]; then
+            log_warning "USB/IP busid is empty. Skipping USB/IP attach."
+            log_info "Available devices on host ${USBIP_HOST}:${USBIP_PORT}:"
+            usbip list -r "${USBIP_HOST}" 2>/dev/null || log_warning "usbip list failed"
+        else
+            log_info "Attaching USB/IP device ${USBIP_BUSID} from ${USBIP_HOST}:${USBIP_PORT}"
+            usbip attach -r "${USBIP_HOST}" -b "${USBIP_BUSID}" -p "${USBIP_PORT}" 2>/dev/null || \
+                log_warning "usbip attach failed. Check host, port, and busid."
+        fi
+    fi
+fi
 
 # Check serial port availability
 if [[ -e "${SERIAL_PORT}" ]]; then

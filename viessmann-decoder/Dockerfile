@@ -23,6 +23,8 @@ RUN apk add --no-cache --virtual .build-deps \
     libmicrohttpd-dev && \
     apk add --no-cache \
     libmicrohttpd \
+    libstdc++ \
+    libgcc \
     curl \
     bash \
     jq

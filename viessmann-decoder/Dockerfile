@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19
+ARG BUILD_FROM=alpine:3.19
 FROM $BUILD_FROM
 
 # Set labels for better container management
@@ -8,10 +8,11 @@ LABEL \
     io.hass.type="addon" \
     io.hass.version="2.1.3"
 
-# Setup debug logging for initialization
-ENV S6_VERBOSITY=2 \
-    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
-    BASHIO_DEBUG=true
+# CRITICAL: Disable s6-overlay - HA Supervisor uses tini as PID 1
+# Setting S6_CMD_WAIT_FOR_SERVICES=0 and using direct CMD execution
+ENV S6_CMD_WAIT_FOR_SERVICES=0 \
+    S6_LOGGING=0 \
+    S6_KEEP_ENV=1
 
 # Install build dependencies and runtime libraries in single layer
 RUN apk add --no-cache --virtual .build-deps \
@@ -101,4 +102,3 @@ EXPOSE 8099
 
 # Direct execution - HA Supervisor uses tini as PID 1, then runs CMD
 CMD ["/run.sh"]
-# Base image provides /init as entrypoint

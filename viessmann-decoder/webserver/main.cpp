@@ -524,12 +524,6 @@ const char* getStatusHTML() {
 const char* getSettingsHTML() {
     static thread_local char html[16384];
 
-    if (!vbus) {
-        snprintf(html, sizeof(html),
-                "<!DOCTYPE html><html><body><h1>Error: System not initialized</h1></body></html>");
-        return html;
-    }
-
     int written = snprintf(html, sizeof(html) - 1,
     "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
     "<title>Settings - Viessmann Decoder</title>"
@@ -647,12 +641,6 @@ const char* getSettingsHTML() {
 // Generate Device Configuration Page HTML
 const char* getDevicesHTML() {
     static thread_local char html[16384];
-
-    if (!vbus) {
-        snprintf(html, sizeof(html),
-                "<!DOCTYPE html><html><body><h1>Error: System not initialized</h1></body></html>");
-        return html;
-    }
 
     int written = snprintf(html, sizeof(html) - 1,
     "<!DOCTYPE html><html><head><meta charset='UTF-8'>"

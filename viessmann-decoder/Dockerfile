@@ -78,12 +78,13 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 # Copy service files for s6-overlay v3
 COPY rootfs/ /
 
-# Set proper permissions for all service scripts
+# Set proper permissions for all service scripts and ensure /init is executable
 RUN chmod 755 /etc/s6-overlay/s6-rc.d/viessmann-decoder/run && \
     chmod 644 /etc/s6-overlay/s6-rc.d/viessmann-decoder/type && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
     chmod 644 /etc/s6-overlay/s6-rc.d/user/contents.d/viessmann-decoder && \
-    chmod 755 /etc/services.d/viessmann-decoder/run 2>/dev/null || true
+    chmod 755 /etc/services.d/viessmann-decoder/run 2>/dev/null || true && \
+    chmod +x /init 2>/dev/null || true
 
 # Create required directories
 RUN mkdir -p /data /tmp && \

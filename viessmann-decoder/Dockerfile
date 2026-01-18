@@ -87,9 +87,9 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 # Optional: Prepare USB/IP client wrapper for remote USB forwarding
 RUN apk add --no-cache socat && \
     mkdir -p /usr/local/bin && \
-    cat > /usr/local/bin/usbip_client.sh << 'EOF'
-#!/bin/bash
-REMOTE_HOST="$1"
+    cat > /usr/local/bin/usbip_client.sh << 'EOF' && \
+    #!/bin/bash
+    REMOTE_HOST="$1"
 REMOTE_PORT="${2:-3240}"
 BUSID="$3"
 

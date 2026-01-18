@@ -6,7 +6,7 @@ LABEL \
     io.hass.name="Viessmann Decoder" \
     io.hass.description="Viessmann VBUS/KW/P300/KM-Bus protocol decoder" \
     io.hass.type="addon" \
-    io.hass.version="1.0.0"
+    io.hass.version="2.1.3"
 
 # Install build dependencies and runtime libraries in single layer
 RUN apk add --no-cache --virtual .build-deps \
@@ -18,18 +18,8 @@ RUN apk add --no-cache --virtual .build-deps \
     apk add --no-cache \
     libmicrohttpd \
     curl \
-    bash
-
-# Set working directory for build
-WORKDIR /build
-
-# Copy source files with proper structure validation
-COPY linux/src /build/src/
-COPY linux/include /build/include/
-COPY src /build/library_src/
-COPY webserver /build/webserver/
-
-# Validate source files exist
+    bash \
+    jq
 RUN test -f /build/library_src/vbusdecoder.cpp && \
     test -f /build/src/LinuxSerial.cpp && \
     test -f /build/src/Arduino.cpp && \

@@ -10,29 +10,29 @@ elif bashio::config.has_value 'log'; then
     bashio::log.level "$(bashio::config 'log')"
 fi
 
-# Read configuration from Home Assistant
-SERIAL_PORT=$(bashio::config 'serial_port')
-BAUD_RATE=$(bashio::config 'baud_rate')
-PROTOCOL=$(bashio::config 'protocol')
-SERIAL_CONFIG=$(bashio::config 'serial_config')
+# Read configuration from Home Assistant with error handling
+SERIAL_PORT=$(bashio::config 'serial_port' 2>/dev/null || echo "")
+BAUD_RATE=$(bashio::config 'baud_rate' 2>/dev/null || echo "")
+PROTOCOL=$(bashio::config 'protocol' 2>/dev/null || echo "")
+SERIAL_CONFIG=$(bashio::config 'serial_config' 2>/dev/null || echo "")
 
-# Set defaults for missing configuration
-if ! bashio::var.has_value "${SERIAL_PORT}"; then
+# Set defaults for missing or invalid configuration
+if ! bashio::var.has_value "${SERIAL_PORT}" || [[ "${SERIAL_PORT}" == "null" ]]; then
     bashio::log.warning "Serial port not configured, using default /dev/ttyUSB0"
     SERIAL_PORT="/dev/ttyUSB0"
 fi
 
-if ! bashio::var.has_value "${BAUD_RATE}"; then
+if ! bashio::var.has_value "${BAUD_RATE}" || [[ "${BAUD_RATE}" == "null" ]]; then
     bashio::log.warning "Baud rate not configured, using default 9600"
     BAUD_RATE="9600"
 fi
 
-if ! bashio::var.has_value "${PROTOCOL}"; then
+if ! bashio::var.has_value "${PROTOCOL}" || [[ "${PROTOCOL}" == "null" ]]; then
     bashio::log.warning "Protocol not configured, using default vbus"
     PROTOCOL="vbus"
 fi
 
-if ! bashio::var.has_value "${SERIAL_CONFIG}"; then
+if ! bashio::var.has_value "${SERIAL_CONFIG}" || [[ "${SERIAL_CONFIG}" == "null" ]]; then
     bashio::log.warning "Serial config not configured, using default 8N1"
     SERIAL_CONFIG="8N1"
 fi

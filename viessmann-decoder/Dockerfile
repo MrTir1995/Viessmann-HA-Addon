@@ -87,7 +87,8 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 # Optional: Prepare USB/IP client wrapper for remote USB forwarding
 RUN apk add --no-cache socat && \
     mkdir -p /usr/local/bin && \
-    cat > /usr/local/bin/usbip_client.sh << 'EOF'
+    cat > /usr/local/bin/usbip_client.sh << 'EOFSCRIPT' && \
+    chmod 755 /usr/local/bin/usbip_client.sh
 #!/bin/bash
 REMOTE_HOST="$1"
 REMOTE_PORT="${2:-3240}"
@@ -114,9 +115,7 @@ fi
 
 echo "ERROR: Neither socat nor nc available for USB/IP forwarding."
 exit 1
-EOF
-
-RUN chmod 755 /usr/local/bin/usbip_client.sh
+EOFSCRIPT
 
 # Copy the main run script (NOT using s6-overlay, direct execution under tini)
 COPY run.sh /run.sh

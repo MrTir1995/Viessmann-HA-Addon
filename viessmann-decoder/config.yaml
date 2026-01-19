@@ -35,7 +35,7 @@ host_dbus: false
 hassio_api: true
 hassio_role: default
 stage: stable
-# image: ghcr.io/mrtir1995/viessmann-decoder-{arch}  # Auskommentiert für lokalen Build
+image: docker.io/mrtir071/viessmann-decoder-{arch}
 options:
   serial_port: /dev/ttyUSB0
   baud_rate: 9600

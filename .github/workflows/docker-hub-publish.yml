@@ -21,6 +21,17 @@ jobs:
     strategy:
       matrix:
         arch: [amd64, aarch64, armhf, armv7, i386]
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+          - arch: armhf
+            platform: linux/arm/v6
+          - arch: armv7
+            platform: linux/arm/v7
+          - arch: i386
+            platform: linux/386
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v4
@@ -47,14 +58,17 @@ jobs:
           fi
 
       - name: Build and push ${{ matrix.arch }}
-        uses: home-assistant/builder@2025.11.0
+        uses: docker/build-push-action@v6
         with:
-          args: |
-            --${{ matrix.arch }} \
-            --target viessmann-decoder \
-            --docker-hub mrtir071 \
-            --docker-user mrtir071 \
-            --docker-password ${{ secrets.DOCKERHUB_TOKEN }}
+          context: ./viessmann-decoder
+          file: ./viessmann-decoder/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            mrtir071/viessmann-decoder-${{ matrix.arch }}:${{ steps.version.outputs.VERSION }}
+            mrtir071/viessmann-decoder-${{ matrix.arch }}:latest
+          build-args: |
+            BUILD_FROM=docker.io/library/alpine:3.19
 
   create-manifest:
     name: Create multi-arch manifest

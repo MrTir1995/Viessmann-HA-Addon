@@ -85,37 +85,35 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
     apk del --no-cache .build-deps
 
 # Optional: Prepare USB/IP client wrapper for remote USB forwarding
-RUN apk add --no-cache socat && \
+RUN apk add --no-cache socat bash && \
     mkdir -p /usr/local/bin && \
-    cat > /usr/local/bin/usbip_client.sh << 'EOFSCRIPT' && \
+    printf '#!/bin/bash\n\
+REMOTE_HOST="$1"\n\
+REMOTE_PORT="${2:-3240}"\n\
+BUSID="$3"\n\
+\n\
+if [[ -z "$REMOTE_HOST" ]] || [[ -z "$BUSID" ]]; then\n\
+    echo "Usage: $0 <host> [port] <busid>"\n\
+    exit 1\n\
+fi\n\
+\n\
+if command -v socat >/dev/null 2>&1; then\n\
+    echo "USB/IP: Connecting via socat to $REMOTE_HOST:$REMOTE_PORT device $BUSID"\n\
+    socat UNIX-LISTEN:/dev/shm/usbip_${BUSID}.sock TCP:${REMOTE_HOST}:${REMOTE_PORT} &\n\
+    sleep 1\n\
+    exit 0\n\
+fi\n\
+\n\
+if command -v nc >/dev/null 2>&1; then\n\
+    echo "USB/IP: Connecting via nc to $REMOTE_HOST:$REMOTE_PORT device $BUSID"\n\
+    nc -k -l -p 3241 -c "nc $REMOTE_HOST $REMOTE_PORT" &\n\
+    sleep 1\n\
+    exit 0\n\
+fi\n\
+\n\
+echo "ERROR: Neither socat nor nc available for USB/IP forwarding."\n\
+exit 1\n' > /usr/local/bin/usbip_client.sh && \
     chmod 755 /usr/local/bin/usbip_client.sh
-#!/bin/bash
-REMOTE_HOST="$1"
-REMOTE_PORT="${2:-3240}"
-BUSID="$3"
-
-if [[ -z "$REMOTE_HOST" ]] || [[ -z "$BUSID" ]]; then
-echo "Usage: $0 <host> [port] <busid>"
-exit 1
-fi
-
-if command -v socat >/dev/null 2>&1; then
-echo "USB/IP: Connecting via socat to $REMOTE_HOST:$REMOTE_PORT device $BUSID"
-socat UNIX-LISTEN:/dev/shm/usbip_${BUSID}.sock TCP:${REMOTE_HOST}:${REMOTE_PORT} &
-sleep 1
-exit 0
-fi
-
-if command -v nc >/dev/null 2>&1; then
-echo "USB/IP: Connecting via nc to $REMOTE_HOST:$REMOTE_PORT device $BUSID"
-nc -k -l -p 3241 -c "nc $REMOTE_HOST $REMOTE_PORT" &
-sleep 1
-exit 0
-fi
-
-echo "ERROR: Neither socat nor nc available for USB/IP forwarding."
-exit 1
-EOFSCRIPT
 
 # Copy the main run script (NOT using s6-overlay, direct execution under tini)
 COPY run.sh /run.sh

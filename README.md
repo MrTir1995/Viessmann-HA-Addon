@@ -1,6 +1,7 @@
 # Viessmann Decoder - Home Assistant Add-on
 
 [![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-HA-Addon)
+[![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-HA-Addon?logo=github)](https://github.com/MrTir1995/Viessmann-HA-Addon/releases)
 ![Version](https://img.shields.io/badge/version-2.1.3-blue.svg)
 ![Supports amd64 Architecture](https://img.shields.io/badge/amd64-yes-green.svg)
 ![Supports aarch64 Architecture](https://img.shields.io/badge/aarch64-yes-green.svg)
@@ -8,115 +9,148 @@
 ![Supports armv7 Architecture](https://img.shields.io/badge/armv7-yes-green.svg)
 ![Supports i386 Architecture](https://img.shields.io/badge/i386-yes-green.svg)
 
-Monitor and configure your Viessmann heating system directly from Home Assistant!
+Überwachen und steuern Sie Ihre Viessmann-Heizungsanlage direkt aus Home Assistant mit professioneller Protokollunterstützung!
 
-This add-on provides a web interface to communicate with Viessmann heating controllers using multiple protocols (VBUS, KW-Bus, P300/Optolink, KM-Bus).
+Dieses Add-on bietet eine umfassende Web-Oberfläche zur Kommunikation mit Viessmann-Heizungssteuerungen unter Verwendung mehrerer Industriestandard-Protokolle (VBUS, KW-Bus, P300/Optolink, KM-Bus).
 
-## Quick Installation
+## 🚀 Schnellinstallation
 
-1. Click the button above to add this repository to Home Assistant
-2. Go to **Settings** → **Add-ons** → **Add-on Store**
-3. Find "Viessmann Decoder" and click **INSTALL**
-4. Configure your serial port and protocol
-5. Click **START**
+1. Klicken Sie auf den Button oben, um dieses Repository zu Home Assistant hinzuzufügen
+2. Gehen Sie zu **Einstellungen** → **Add-ons** → **Add-on Store**
+3. Suchen Sie "Viessmann Decoder" und klicken Sie auf **INSTALLIEREN**
+4. Konfigurieren Sie Ihren seriellen Port und das Protokoll
+5. Klicken Sie auf **STARTEN**
 
-For detailed installation instructions, see [INSTALL.md](viessmann-decoder/INSTALL.md)
+Für detaillierte Installationsanweisungen siehe [INSTALL.md](viessmann-decoder/INSTALL.md)
 
-## Features
+## ✨ Features
 
-- **Multi-Protocol Support**: Works with VBUS, KW-Bus, P300, and KM-Bus protocols
-- **Real-Time Monitoring**: View temperature sensors, pump states, and relay status
-- **Web Interface**: Clean, responsive dashboard accessible from Home Assistant
-- **Auto-Discovery**: Automatically detects devices on the bus
-- **Easy Configuration**: Simple setup through Home Assistant UI
-- **Lightweight**: Built on Alpine Linux for minimal resource usage
-- **Multi-Architecture**: Supports amd64, aarch64, armhf, armv7, i386
+- 🔄 **Multi-Protokoll-Unterstützung**: Funktioniert mit VBUS, KW-Bus, P300 und KM-Bus Protokollen
+- 📊 **Echtzeit-Überwachung**: Live-Temperatursensoren, Pumpenzustände und Relaiszustände
+- 🖥️ **Web-Interface**: Sauberes, responsives Dashboard zugänglich aus Home Assistant
+- 🔍 **Automatische Erkennung**: Erkennt automatisch Geräte auf dem Bus
+- ⚙️ **Einfache Konfiguration**: Intuitive Einrichtung über Home Assistant UI
+- 🪶 **Leichtgewichtig**: Auf Alpine Linux basierend für minimalen Ressourcenverbrauch
+- 🏠 **Home Assistant Integration**: Native Sensor- und Entitätserstellung
+- 🔒 **Sicher**: Läuft mit angemessenen Berechtigungen und Sicherheitskontext
 
-## Supported Devices
+## 🎯 Unterstützte Geräte
 
-### VBUS Protocol Devices
+### VBUS Protokoll Geräte
 
-- Viessmann Vitosolic 200
-- RESOL DeltaSol BX Plus/BX/MX
-- Generic RESOL solar controllers
+- ✅ Viessmann Vitosolic 200 Solarregler
+- ✅ RESOL DeltaSol BX Plus/BX/MX Regler
+- ✅ Generische RESOL Solar- und Heizungsregler
+- ✅ VBUS-kompatible Geräte von Drittanbietern
 
-### KW-Bus (VS1) Protocol Devices
+### KW-Bus (VS1) Protokoll Geräte
 
-- Viessmann Vitotronic 100/200/300 series
-- Older Vitodens and Vitocrossal models
+- ✅ Viessmann Vitotronic 100/200/300 Serie
+- ✅ Vitodens und Vitocrossal Legacy-Modelle
+- ✅ Ältere Viessmann Steuereinheiten
 
-### P300 (VS2/Optolink) Protocol Devices
+### P300 (VS2/Optolink) Protokoll Geräte
 
-- Modern Viessmann Vitodens condensing boilers
-- Viessmann Vitocrossal commercial systems
+- ✅ Moderne Viessmann Vitodens Brennwertkessel
+- ✅ Vitocrossal 300 Serie
+- ✅ Aktuelle Generation Vitotronic Regler
+- ✅ Viessmann Vitocrossal kommerzielle Systeme
 
-### KM-Bus Protocol Devices
+### KM-Bus Protokoll Geräte
 
-- Vitotrol 200/300 remote controls
-- Vitocom 100 internet gateway
-- Expansion modules and switching modules
+- ✅📦 Installation
 
-## Installation
+1. Fügen Sie dieses Repository zum Home Assistant Add-on Store hinzu
+2. Installieren Sie das "Viessmann Decoder" Add-on
+3. Konfigurieren Sie Ihren seriellen Port und die Protokolleinstellungen
+4. Starten Sie das Add-on
+5. Greifen Sie über Home Assistant auf die Web-Oberfläche zu
 
-1. Add this repository to your Home Assistant add-on store
-2. Install the "Viessmann Decoder" add-on
-3. Configure your serial port and protocol settings
+Für detaillierte Installationsanweisungen siehe [INSTALL.md](viessmann-decoder/INSTALL.md)
+
+## ⚙️ Konfigure your serial port and protocol settings
+
 4. Start the add-on
 5. Access the web interface through Home Assistant
 
-## Configuration
+## ⚙️ Konfiguration
 
-The add-on can be configured through the Home Assistant UI with the following options:
+Das Add-on kann über die Home Assistant Benutzeroberfläche konfiguriert werden:
 
-### serial_port (required)
+### serial_port (erforderlich)
 
-The serial device connected to your Viessmann system.
+Das serielle Gerät, das mit Ihrem Viessmann-System verbunden ist.
 
-**Common values:**
+**Häufige Werte:**
 
-- `/dev/ttyUSB0` - USB-to-Serial adapter (most common)
-- `/dev/ttyUSB1` - Second USB-to-Serial adapter
-- `/dev/ttyACM0` - Some USB devices
+- `/dev/ttyUSB0` - USB-zu-Serial-Adapter (am häufigsten)
+- `/dev/ttyUSB1` - Zweiter USB-zu-Serial-Adapter
+- `/dev/ttyACM0` - Einige USB-Geräte
 - `/dev/ttyAMA0` - Raspberry Pi GPIO UART
 
-**How to find your serial port:**
+**So finden Sie Ihren seriellen Port:**
 
-1. Go to Home Assistant Settings → System → Hardware
-2. Look under "Serial" section for connected devices
-3. Or use SSH/Terminal to run: `ls -la /dev/tty*`
+1. Gehen Sie zu Home Assistant Einstellungen → System → Hardware
+2. Suchen Sie im Abschnitt "Serial" nach angeschlossenen Geräten
+3. Oder verwenden Sie SSH/Terminal: `ls -la /dev/tty*`
 
-### baud_rate (required)
+### baud_rate (erforderlich)
 
-The communication speed for your protocol.
+Die Kommunikationsgeschwindigkeit für Ihr Protokoll.
 
-**Common values:**
+**Häufige Werte:**
 
-- `9600` - VBUS protocol (Vitosolic, DeltaSol)
-- `4800` - KW-Bus and P300 protocols (Vitotronic, Vitodens)
+- `9600` - VBUS-Protokoll (Vitosolic, DeltaSol)
+- `4800` - KW-Bus- und P300-Protokolle (Vitotronic, Vitodens)
 
-### protocol (required)
+### protocol (erforderlich)
 
-The protocol used by your heating system.
+Das von Ihrem Heizsystem verwendete Protokoll.
 
-**Options:**
+**Optionen:**
 
-- `vbus` - RESOL VBUS protocol (Vitosolic 200, DeltaSol controllers)
-- `kw` - KW-Bus (VS1) protocol (Vitotronic 100/200/300, older systems)
-- `p300` - P300/VS2 (Optolink) protocol (modern Vitodens boilers)
-- `km` - KM-Bus protocol (remote controls, expansion modules)
+- `vbus` - RESOL VBUS-Protokoll (Vitosolic 200, DeltaSol-Regler)
+- `kw` - KW-Bus (VS1)-Protokoll (Vitotronic 100/200/300, ältere Systeme)
+- `p300` - P300/VS2 (Optolink)-Protokoll (moderne Vitodens-Kessel)
+- `km` - KM-Bus-Protokoll (Fernbedienungen, Erweiterungsmodule)
 
-### serial_config (required)
+### serial_config (erforderlich)
 
-The serial port configuration.
+Die serielle Port-Konfiguration.
 
-**Options:**
+**Optionen:**
 
-- `8N1` - 8 data bits, no parity, 1 stop bit (for VBUS, KM-Bus)
-- `8E2` - 8 data bits, even parity, 2 stop bits (for KW-Bus, P300)
+- `8N1` - 8 Datenbits, keine Parität, 1 Stoppbit (für VBUS, KM-Bus)
+- `8E2` - 8 Datenbits, gerade Parität, 2 Stoppbits (für KW-Bus, P300)
 
-## Configuration Examples
+### USB/IP Konfiguration (optional)
 
-### Example 1: Vitosolic 200 (Solar Controller)
+Für Remote-USB-Zugriff über das Netzwerk.
+
+**usbip_enable** (optional)
+
+- `false` - Deaktiviert (Standard)
+- `true` - Aktiviert USB/IP Unterstützung
+
+**usbip_host** (optional)
+
+- IP-Adresse oder Hostname des USB/IP-Servers
+- Beispiel: `192.168.1.100`
+
+**usbip_port** (optional)
+
+- Port des USB/IP-Servers
+- Standard: `3240`
+
+**usbip_busid** (optional)
+
+- USB Bus ID des Geräts auf dem Remote-Server
+- Beispiel: `1-1.3`
+- Wird mit `usbip list -l` ermittelt
+
+## 📝 Konfigurationsbeispiele
+
+### Beispiel 1: Vitosolic 200 (Solarregler)
 
 ```json
 {
@@ -127,7 +161,7 @@ The serial port configuration.
 }
 ```
 
-### Example 2: Vitotronic 200 (KW-Bus)
+### Beispiel 2: Vitotronic 200 (KW-Bus)
 
 ```json
 {
@@ -138,7 +172,7 @@ The serial port configuration.
 }
 ```
 
-### Example 3: Modern Vitodens (Optolink)
+### Beispiel 3: Moderner Vitodens (Optolink)
 
 ```json
 {
@@ -149,100 +183,146 @@ The serial port configuration.
 }
 ```
 
-## Hardware Setup
+## 🔌 Hardware-Einrichtung
 
-### USB-to-Serial Adapter
+### USB-zu-Serial-Adapter
 
-The most common setup uses a USB-to-Serial adapter (FTDI, CH340, CP2102, etc.) connected to your Viessmann system's data bus.
+Die häufigste Einrichtung verwendet einen USB-zu-Serial-Adapter (FTDI, CH340, CP2102, etc.), der mit dem Datenbus Ihres Viessmann-Systems verbunden ist.
 
-**Wiring:**
+**Verkabelung:**
 
-- Connect adapter RX to bus TX
-- Connect adapter TX to bus RX
-- Connect GND to bus GND
-- Consider using an optocoupler for electrical isolation
+- Verbinden Sie Adapter RX mit Bus TX
+- Verbinden Sie Adapter TX mit Bus RX
+- Verbinden Sie GND mit Bus GND
+- Erwägen Sie die Verwendung eines Optokopplers für elektrische Isolation
 
 ### Raspberry Pi GPIO
 
-You can also use the Raspberry Pi's built-in UART:
+Sie können auch den eingebauten UART des Raspberry Pi verwenden:
 
-- Enable UART in Raspberry Pi configuration
-- Connect GPIO 14 (TX) and GPIO 15 (RX)
-- Set `serial_port` to `/dev/ttyAMA0`
+- Aktivieren Sie UART in der Raspberry Pi Konfiguration
+- Verbinden Sie GPIO 14 (TX) und GPIO 15 (RX)
+- Setzen Sie `serial_port` auf `/dev/ttyAMA0`
 
-⚠️ **Important:** Always ensure proper electrical isolation when connecting to your heating system. Follow local electrical codes and regulations.
+### Remote USB/IP (Netzwerk-Serial-Adapter)
 
-## Using the Add-on
+Das Add-on unterstützt auch USB-Geräte über das Netzwerk via USB/IP:
 
-### Web Interface
+**Anwendungsfall:** Ihr USB-zu-Serial-Adapter ist an einem anderen Rechner im Netzwerk angeschlossen (z.B. direkt bei der Heizung).
 
-After starting the add-on, access the web interface:
+**Konfiguration:**
 
-1. Click "OPEN WEB UI" in the add-on info page
-2. Or navigate to `http://homeassistant.local:8099`
+```json
+{
+  "serial_port": "/dev/ttyUSB0",
+  "baud_rate": 9600,
+  "protocol": "vbus",
+  "serial_config": "8N1",
+  "usbip_enable": true,
+  "usbip_host": "192.168.1.100",
+  "usbip_port": 3240,
+  "usbip_busid": "1-1.3"
+}
+```
 
-The web interface provides:
+**Einrichtung des USB/IP-Servers:**
 
-- **Dashboard**: Real-time view of all sensor data
-- **Status**: System and configuration information
+Auf dem Rechner mit dem USB-Adapter:
 
-### Data Updates
+```bash
+# USB/IP installieren
+sudo apt-get install usbip
 
-The dashboard automatically refreshes data every 2 seconds, showing:
+# USB/IP Server starten
+sudo modprobe usbip-host
+sudo usbipd -D
 
-- Temperature sensors (°C)
-- Pump power levels (%)
-- Relay states (ON/OFF)
-- Communication status
+# Verfügbare USB-Geräte auflisten
+usbip list -l
 
-## Troubleshooting
+# USB-Gerät freigeben (z.B. busid 1-1.3)
+sudo usbip bind -b 1-1.3
+```
 
-### Serial Port Not Found
+**Vorteile:**
 
-**Symptom:** Add-on fails to start with "Serial port not found" error
+- Flexibler Standort des USB-Adapters
+- Keine direkte USB-Verbindung zum Home Assistant Server nötig
+- Ideal für verteilte Installationen
 
-**Solutions:**
+⚠️ **Wichtig:** Stellen Sie immer eine ordnungsgemäße elektrische Isolation sicher, wenn Sie sich mit Ihrem Heizsystem verbinden. Befolgen Sie lokale elektrische Vorschriften und Bestimmungen.
 
-1. Verify the serial device is connected: Settings → System → Hardware
-2. Check the `serial_port` configuration matches your actual device
-3. Ensure the device is properly recognized by the system
-4. Try unplugging and replugging the USB adapter
+## 💻 Verwendung des Add-ons
 
-### No Data Received
+### Web-Interface
 
-**Symptom:** Dashboard shows "Waiting for data..."
+Nach dem Start des Add-ons greifen Sie auf die Web-Oberfläche zu:
 
-**Solutions:**
+1. Klicken Sie auf "WEB UI ÖFFNEN" auf der Add-on-Infoseite
+2. Oder navigieren Sie zu `http://homeassistant.local:8099`
 
-1. Verify physical connections to your heating system
-2. Check that `protocol` matches your device
-3. Ensure `baud_rate` and `serial_config` are correct
-4. Verify the heating system is powered and communicating
-5. Check for reversed RX/TX connections
+Die Web-Oberfläche bietet:
 
-### Communication Status: Error
+- **Dashboard**: Echtzeitansicht aller Sensordaten
+- **Status**: System- und Konfigurationsinformationen
 
-**Symptom:** Status shows "Error" instead of "OK"
+### Datenaktualisierungen
 
-**Solutions:**
+Das Dashboard aktualisiert die Daten automatisch alle 2 Sekunden und zeigt:
 
-1. Double-check protocol settings
-2. Verify baud rate is correct for your device
-3. Check serial configuration (8N1 vs 8E2)
-4. Ensure no other software is using the serial port
-5. Try restarting the add-on
+- Temperatursensoren (°C)
+- Pumpenleistungsstufen (%)
+- Relaiszustände (EIN/AUS)
+- Kommunikationsstatus
 
-### Permission Denied
+## 🔧 Fehlerbehebung
 
-**Symptom:** Cannot access serial port due to permissions
+### Serieller Port nicht gefunden
 
-**Solution:** This should be handled automatically by the add-on's privileged access. If issues persist, try restarting Home Assistant.
+**Symptom:** Add-on startet nicht mit Fehler "Serial port not found"
 
-## Integration with Home Assistant
+**Lösungen:**
 
-### Sensors
+1. Überprüfen Sie, ob das serielle Gerät verbunden ist: Einstellungen → System → Hardware
+2. Prüfen Sie, ob die `serial_port` Konfiguration mit Ihrem tatsächlichen Gerät übereinstimmt
+3. Stellen Sie sicher, dass das Gerät vom System erkannt wird
+4. Versuchen Sie, den USB-Adapter ab- und wieder anzustecken
 
-The add-on exposes data via HTTP API at `/data` endpoint. You can create Home Assistant sensors using the RESTful integration:
+### Keine Daten empfangen
+
+**Symptom:** Dashboard zeigt "Warten auf Daten..."
+
+**Lösungen:**
+
+1. Überprüfen Sie die physischen Verbindungen zu Ihrem Heizsystem
+2. Prüfen Sie, ob `protocol` mit Ihrem Gerät übereinstimmt
+3. Stellen Sie sicher, dass `baud_rate` und `serial_config` korrekt sind
+4. Überprüfen Sie, ob das Heizsystem eingeschaltet ist und kommuniziert
+5. Prüfen Sie auf vertauschte RX/TX-Verbindungen
+
+### Kommunikationsstatus: Fehler
+
+**Symptom:** Status zeigt "Fehler" anstelle von "OK"
+
+**Lösungen:**
+
+1. Überprüfen Sie die Protokolleinstellungen
+2. Verifizieren Sie, dass die Baudrate für Ihr Gerät korrekt ist
+3. Prüfen Sie die serielle Konfiguration (8N1 vs 8E2)
+4. Stellen Sie sicher, dass keine andere Software den seriellen Port verwendet
+5. Versuchen Sie, das Add-on neu zu starten
+
+### Zugriff verweigert
+
+**Symptom:** Zugriff auf den seriellen Port aufgrund von Berechtigungen nicht möglich
+
+**Lösung:** Dies sollte automatisch durch den privilegierten Zugriff des Add-ons gehandhabt werden. Bei anhaltenden Problemen versuchen Sie, Home Assistant neu zu starten.
+
+## 🏠 Integration mit Home Assistant
+
+### Sensoren
+
+Das Add-on stellt Daten über HTTP API am `/data` Endpunkt bereit. Sie können Home Assistant Sensoren mit der RESTful-Integration erstellen:
 
 ```yaml
 sensor:
@@ -258,23 +338,23 @@ sensor:
 
 template:
   - sensor:
-      - name: "Boiler Temperature"
+      - name: "Kesseltemperatur"
         unique_id: viessmann_temp_1
         unit_of_measurement: "°C"
         state: '{{ state_attr("sensor.viessmann_data", "temperatures")[0] }}'
-      - name: "Circulation Pump"
+      - name: "Zirkulationspumpe"
         unique_id: viessmann_pump_1
         unit_of_measurement: "%"
         state: '{{ state_attr("sensor.viessmann_data", "pumps")[0] }}'
 ```
 
-### Automation Examples
+### Automatisierungsbeispiele
 
-**Example: Alert on low temperature**
+**Beispiel: Warnung bei niedriger Temperatur**
 
 ```yaml
 automation:
-  - alias: "Low boiler temperature alert"
+  - alias: "Warnung bei niedriger Kesseltemperatur"
     trigger:
       platform: numeric_state
       entity_id: sensor.viessmann_temp_1
@@ -282,57 +362,29 @@ automation:
     action:
       service: notify.notify
       data:
-        message: "Warning: Boiler temperature is below 30°C"
+        message: "Warnung: Kesseltemperatur ist unter 30°C"
 ```
 
-## Support
+## 📚 Weitere Dokumentation
 
-For issues, questions, or contributions:
+- [Installations-Anleitung](viessmann-decoder/INSTALL.md)
+- [Entwickler-Dokumentation](viessmann-decoder/DEVELOPMENT.md)
+- [MQTT-Setup](doc/MQTT_SETUP.md)
+- [Hardware-Setup](doc/HARDWARE_SETUP.md)
+- [Scheduler-Anleitung](doc/SCHEDULER_GUIDE.md)
+- [Changelog](CHANGELOG.md)
 
-- GitHub: https://github.com/MrTir1995/Viessmann-HA-Addon
-- Issues: https://github.com/MrTir1995/Viessmann-HA-Addon/issues
+## 💬 Support
 
-## Troubleshooting
+Bei Problemen, Fragen oder Beiträgen:
 
-### Common Issues
+- GitHub: <https://github.com/MrTir1995/Viessmann-HA-Addon>
+- Issues: <https://github.com/MrTir1995/Viessmann-HA-Addon/issues>
 
-#### "[FATAL tini (7)] exec /init failed: Permission denied" Error
+## 📄 Lizenz
 
-This error has been fixed in the latest version of the addon by properly configuring S6-Overlay v3. If you encounter this error:
+Siehe die Haupt-Repository LICENSE-Datei für Details.
 
-1. Update the addon to the latest version (v2.1.1 or later)
-2. Restart the addon
+## ⚠️ Haftungsausschluss
 
-**Technical Details**: Home Assistant's base images use S6-Overlay v3, which requires the `/init` process to run as PID 1. The error occurs when Docker's default init system (tini) conflicts with S6-Overlay.
-
-The fix is to add `init: false` to the addon's config.yaml. This tells the Supervisor not to inject Docker's init, allowing S6-Overlay to manage the service correctly.
-
-The addon uses the proper S6-Overlay service directory structure (`/etc/services.d/viessmann-decoder/run`). See the [Home Assistant S6-Overlay migration guide](https://developers.home-assistant.io/blog/2022/05/12/s6-overlay-base-images/) for more information.
-
-#### Serial Port Not Found
-
-If the addon reports that the serial port is not found:
-
-1. Verify that your USB-to-serial adapter is properly connected
-2. Check that the device appears in `/dev` (e.g., `/dev/ttyUSB0`)
-3. Ensure the addon has permission to access the serial device
-4. Try a different USB port
-5. Check the addon logs for specific error messages
-
-#### Connection Issues
-
-If the addon starts but cannot communicate with the heating system:
-
-1. Verify the protocol selection matches your device
-2. Check the baud rate setting (9600 for VBUS, 4800 for KW/P300/KM)
-3. Verify the serial configuration (8N1 for VBUS, 8E2 for KW/P300)
-4. Test the serial adapter with another tool to confirm it works
-5. Check your hardware wiring and connections
-
-## License
-
-See the main repository LICENSE file for details.
-
-## Disclaimer
-
-⚠️ **WARNING**: This add-on interfaces with your heating system. Use at your own risk. Always follow proper electrical safety procedures and local regulations when interfacing with heating systems. The authors assume no liability for any damages.
+**WARNUNG**: Dieses Add-on kommuniziert mit Ihrem Heizsystem. Verwendung auf eigene Gefahr. Befolgen Sie immer ordnungsgemäße elektrische Sicherheitsverfahren und lokale Vorschriften beim Anschluss an Heizsysteme. Die Autoren übernehmen keine Haftung für Schäden.

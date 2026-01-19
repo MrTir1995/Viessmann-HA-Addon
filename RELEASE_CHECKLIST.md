@@ -36,13 +36,13 @@ git tag -a v2.1.3 -m "Release version 2.1.3"
 git push origin v2.1.3
 ```
 
-- [ ] Changes committed
+- [ ] Änderungen committed
 - [ ] Tag erstellt und gepusht
 - [ ] GitHub Release erstellt
 
 ## GitHub Release
 
-1. Gehen Sie zu: https://github.com/MrTir1995/Viessmann-HA-Addon/releases
+1. Gehen Sie zu: <https://github.com/MrTir1995/Viessmann-HA-Addon/releases>
 2. Klicken Sie "Create a new release"
 3. Füllen Sie aus:
    - Tag: `v2.1.3`
@@ -119,6 +119,6 @@ docker pull ghcr.io/mrtir1995/viessmann-decoder-amd64:2.1.2
 
 ## Notes
 
-- Release Datum: ****\_\_\_****
-- Released von: ****\_\_\_****
-- Besondere Hinweise: ****\_\_\_****
+- Release Datum: \***\*\_\_\_\*\***
+- Released von: \***\*\_\_\_\*\***
+- Besondere Hinweise: \***\*\_\_\_\*\***

@@ -1,6 +1,6 @@
 # Viessmann Decoder Add-on
 
-Monitor your Viessmann heating system from Home Assistant
+Überwachen Sie Ihre Viessmann-Heizungsanlage aus Home Assistant
 
 ![Supports aarch64 Architecture][aarch64-shield]
 ![Supports amd64 Architecture][amd64-shield]
@@ -8,92 +8,128 @@ Monitor your Viessmann heating system from Home Assistant
 ![Supports armv7 Architecture][armv7-shield]
 ![Supports i386 Architecture][i386-shield]
 
-## About
+## Über das Add-on
 
-This add-on enables monitoring and data collection from Viessmann heating systems using various protocols (VBUS, KW-Bus, P300, KM-Bus). It provides a clean web interface and REST API for integration with Home Assistant.
+Dieses Add-on ermöglicht die Überwachung und Datenerfassung von Viessmann-Heizungssystemen unter Verwendung verschiedener Protokolle (VBUS, KW-Bus, P300, KM-Bus). Es bietet eine saubere Web-Oberfläche und REST API für die Integration mit Home Assistant.
 
 ### Features
 
-- 🌡️ Real-time temperature monitoring
-- 🔄 Pump status and power levels
-- 💡 Relay states
-- 📊 Live dashboard with auto-refresh
-- 🔌 Multiple protocol support
-- 🐳 Docker-based for easy deployment
-- 📱 Responsive web interface
+- 🌡️ Echtzeit-Temperaturüberwachung
+- 🔄 Pumpenstatus und Leistungsstufen
+- 💡 Relaiszustände
+- 📊 Live-Dashboard mit automatischer Aktualisierung
+- 🔌 Mehrere Protokoll-Unterstützung
+- 🐳 Docker-basiert für einfache Bereitstellung
+- 📱 Responsive Web-Oberfläche
 
 ## Installation
 
-1. Navigate to **Supervisor > Add-on Store** in Home Assistant
-2. Click the three dots in the top right corner
-3. Select **Repositories**
-4. Add this repository URL: `https://github.com/MrTir1995/Viessmann-HA-Addon`
-5. Click **Add**, then close
-6. Find "Viessmann Decoder" in the add-on list and click **Install**
+1. Navigieren Sie zu **Supervisor > Add-on Store** in Home Assistant
+2. Klicken Sie auf die drei Punkte in der oberen rechten Ecke
+3. Wählen Sie **Repositories**
+4. Fügen Sie diese Repository-URL hinzu: `https://github.com/MrTir1995/Viessmann-HA-Addon`
+5. Klicken Sie auf **Hinzufügen**, dann schließen
+6. Suchen Sie "Viessmann Decoder" in der Add-on-Liste und klicken Sie auf **Installieren**
 
-## Configuration
+## Konfiguration
 
-### Options
+### Optionen
 
-| Option | Description | Default |
-| ------ | ----------- | ------- |
-| `serial_port` | Serial port for connection | `/dev/ttyUSB0` |
-| `baud_rate` | Communication speed | `9600` |
-| `protocol` | Protocol type | `vbus` |
-| `serial_config` | Serial configuration | `8N1` |
-| `log_level` | Logging verbosity | `info` |
+| Option          | Beschreibung                      | Standard       |
+| --------------- | --------------------------------- | -------------- |
+| `serial_port`   | Serieller Port für die Verbindung | `/dev/ttyUSB0` |
+| `baud_rate`     | Kommunikationsgeschwindigkeit     | `9600`         |
+| `protocol`      | Protokolltyp                      | `vbus`         |
+| `serial_config` | Serielle Konfiguration            | `8N1`          |
+| `log_level`     | Log-Detailstufe                   | `info`         |
+| `usbip_enable`  | USB/IP Remote-Zugriff             | `false`        |
+| `usbip_host`    | USB/IP Server IP                  | -              |
+| `usbip_port`    | USB/IP Server Port                | `3240`         |
+| `usbip_busid`   | USB Bus ID                        | -              |
 
-### Protocol Options
+### Protokoll-Optionen
 
-- **vbus**: RESOL VBUS protocol (most common)
-- **kw**: KW-Bus (VS1) protocol
-- **p300**: P300 (VS2/Optolink) protocol
-- **km**: KM-Bus protocol
+- **vbus**: RESOL VBUS-Protokoll (am häufigsten)
+- **kw**: KW-Bus (VS1)-Protokoll
+- **p300**: P300 (VS2/Optolink)-Protokoll
+- **km**: KM-Bus-Protokoll
 
-### Baud Rate Options
+### Baudrate-Optionen
 
-- 2400, 4800, 9600 (default), 19200, 38400, 115200
+- 2400, 4800, 9600 (Standard), 19200, 38400, 115200
 
-### Serial Configuration
+### Serielle Konfiguration
 
-- **8N1**: 8 data bits, no parity, 1 stop bit (default)
-- **8E2**: 8 data bits, even parity, 2 stop bits
+- **8N1**: 8 Datenbits, keine Parität, 1 Stoppbit (Standard)
+- **8E2**: 8 Datenbits, gerade Parität, 2 Stoppbits
 
-## Hardware Setup
+## Hardware-Einrichtung
 
-### Required Hardware
+### Erforderliche Hardware
 
-1. USB-to-TTL adapter (3.3V or 5V depending on your Viessmann controller)
-2. Connection cable to the Viessmann bus interface
+1. USB-zu-TTL-Adapter (3,3 V oder 5 V je nach Viessmann-Steuerung)
+2. Verbindungskabel zur Viessmann-Bus-Schnittstelle
 
-### Wiring
+### Verkabelung
 
-Connect your USB adapter to the appropriate bus port on your Viessmann controller:
+Verbinden Sie Ihren USB-Adapter mit dem entsprechenden Bus-Port an Ihrer Viessmann-Steuerung:
 
-- GND → Ground
-- RX → Data line (TX on adapter)
-- TX → Data line (RX on adapter)
+- GND → Masse
+- RX → Datenleitung (TX am Adapter)
+- TX → Datenleitung (RX am Adapter)
 
-**Note:** Check your specific Viessmann controller documentation for exact pinouts.
+**Hinweis:** Überprüfen Sie die Dokumentation Ihrer spezifischen Viessmann-Steuerung für genaue Pinbelegungen.
 
-## Web Interface
+## USB/IP Remote-Zugriff
 
-Access the web interface at: `http://homeassistant.local:8099`
+Das Add-on unterstützt USB-Geräte über das Netzwerk via USB/IP. Dies ermöglicht es, den USB-Serial-Adapter an einem anderen Rechner im Netzwerk anzuschließen.
 
-Or use the **Ingress** panel directly in Home Assistant.
+### Server-Einrichtung
 
-### API Endpoints
+Auf dem Rechner mit dem USB-Adapter:
 
-| Endpoint | Description |
-| -------- | ----------- |
-| `/` | Main dashboard |
-| `/data` | JSON data endpoint |
-| `/health` | Health check endpoint |
-| `/settings` | Configuration page |
-| `/devices` | Device management |
-| `/status` | System status |
+```bash
+# USB/IP installieren
+sudo apt-get install usbip
 
-### Example Data Response
+# Server starten
+sudo modprobe usbip-host
+sudo usbipd -D
+
+# USB-Geräte auflisten
+usbip list -l
+
+# Gerät freigeben
+sudo usbip bind -b 1-1.3
+```
+
+### Add-on-Konfiguration
+
+```yaml
+usbip_enable: true
+usbip_host: "192.168.1.100"
+usbip_port: 3240
+usbip_busid: "1-1.3"
+```
+
+## Web-Oberfläche
+
+Greifen Sie auf die Web-Oberfläche zu unter: `http://homeassistant.local:8099`
+
+Oder verwenden Sie das **Ingress**-Panel direkt in Home Assistant.
+
+### API-Endpunkte
+
+| Endpunkt    | Beschreibung        |
+| ----------- | ------------------- |
+| `/`         | Haupt-Dashboard     |
+| `/data`     | JSON-Datenendpunkt  |
+| `/health`   | Gesundheitsprüfung  |
+| `/settings` | Konfigurationsseite |
+| `/devices`  | Geräteverwaltung    |
+| `/status`   | Systemstatus        |
+
+### Beispiel Datenantwort
 
 ```json
 {

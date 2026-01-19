@@ -1,4 +1,4 @@
-# Viessmann Decoder Home Assistant Add-on
+# Viessmann Decoder - Installations-Anleitung
 
 ![Version](https://img.shields.io/badge/version-2.1.3-blue.svg)
 ![Supports amd64 Architecture](https://img.shields.io/badge/amd64-yes-green.svg)
@@ -7,7 +7,7 @@
 ![Supports armv7 Architecture](https://img.shields.io/badge/armv7-yes-green.svg)
 ![Supports i386 Architecture](https://img.shields.io/badge/i386-yes-green.svg)
 
-Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, and KM-Bus protocols.
+Überwachen und konfigurieren Sie Viessmann-Heizungssysteme über VBUS, KW-Bus, P300 und KM-Bus Protokolle.
 
 ## Installation vom GitHub Add-on Store
 
@@ -75,6 +75,10 @@ Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, and KM-B
 | `protocol`      | list   | `vbus`         | Protokoll-Typ (vbus, kw, p300, km)                    |
 | `serial_config` | list   | `8N1`          | Serielle Konfiguration (8N1, 8E2)                     |
 | `log_level`     | string | `info`         | Log-Level (trace, debug, info, warning, error, fatal) |
+| `usbip_enable`  | bool   | `false`        | USB/IP Remote-Zugriff aktivieren                      |
+| `usbip_host`    | string | -              | USB/IP Server IP-Adresse                              |
+| `usbip_port`    | int    | `3240`         | USB/IP Server Port                                    |
+| `usbip_busid`   | string | -              | USB Bus ID auf Remote-Server                          |
 
 ## Web-Interface
 

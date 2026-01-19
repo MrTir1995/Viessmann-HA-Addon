@@ -4,6 +4,8 @@ All notable changes to this repository and its add-ons will be documented in thi
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-01-19
+
 ### Fixed
 - Fixed critical S6-Overlay v3 permissions issue - added execute permissions to service run script
 - Updated AppArmor profile to include supervisor socket access

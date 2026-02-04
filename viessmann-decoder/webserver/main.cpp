@@ -30,6 +30,7 @@ constexpr int COMPATIBILITY_ATTEMPTS = 200; // ~2 seconds with 10ms delay
 constexpr useconds_t COMPATIBILITY_DELAY_US = 10000;
 constexpr int RECONNECT_INTERVAL_TICKS = 500; // 5 seconds with 10ms loop delay
 constexpr useconds_t LOOP_DELAY_US = 10000;
+constexpr int KMBUS_POLL_INTERVAL_TICKS = 300; // 3 seconds with 10ms loop delay for KM-Bus polling
 
 // Configuration structure
 struct Config {
@@ -941,10 +942,25 @@ int main(int argc, char* argv[]) {
 
     // Main loop with serial port reconnection logic
     int reconnectCounter = 0;
+    int kmbusPollCounter = 0;  // Counter for KM-Bus polling
 
     while (running) {
         if (serialConnected && vbus && deviceCompatible) {
             vbus->loop();
+            
+            // KM-Bus active polling: Request status data periodically
+            if (config.protocol == PROTOCOL_KM) {
+                kmbusPollCounter++;
+                if (kmbusPollCounter >= KMBUS_POLL_INTERVAL_TICKS) {
+                    kmbusPollCounter = 0;
+                    // Poll status record from master controller
+                    pthread_mutex_lock(&data_mutex);
+                    if (vbus) {
+                        vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+                    }
+                    pthread_mutex_unlock(&data_mutex);
+                }
+            }
         } else {
             // Try to reconnect periodically
             reconnectCounter++;

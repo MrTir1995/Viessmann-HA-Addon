@@ -1,5 +1,5 @@
 name: Viessmann Decoder
-version: 2.1.5
+version: 2.1.6
 slug: viessmann-decoder
 description: Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, and KM-Bus protocols
 arch:

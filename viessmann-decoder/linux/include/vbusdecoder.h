@@ -165,6 +165,9 @@ class VBUSDecoder {
     bool setKMBusSetpoint(uint8_t circuit, float temperature);  // Set temperature setpoint
     bool setKMBusEcoMode(bool enable);      // Enable/disable eco mode
     bool setKMBusPartyMode(bool enable);    // Enable/disable party mode
+    
+    // KM-Bus polling (request data from controller)
+    bool pollKMBusStatusRecord(uint8_t recordAddress = KMBUS_ADDR_MASTER_STATUS);  // Request status record from controller
 
   private:
     Stream* _stream;

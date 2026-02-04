@@ -301,6 +301,15 @@ bool VBUSDecoder::setKMBusPartyMode(bool enable) {
   return _kmSendCommand(KMBUS_ADDR_MASTER_CMD, KMBUS_CMD_WRR_DAT, &command, 1);
 }
 
+// Poll KM-Bus status record (actively request data from controller)
+bool VBUSDecoder::pollKMBusStatusRecord(uint8_t recordAddress) {
+  if (_protocol != PROTOCOL_KM) return false;
+  
+  // Send RDR (Read Record) request to the specified address
+  // This simulates a Vitotrol remote control requesting status data
+  return _kmSendCommand(recordAddress, KMBUS_CMD_RDR_REQ, nullptr, 0);
+}
+
 // Helper function to send KM-Bus commands
 bool VBUSDecoder::_kmSendCommand(uint8_t address, uint8_t command, const uint8_t* data, uint8_t dataLen) {
   if (!_stream) return false;

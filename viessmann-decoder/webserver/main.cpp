@@ -954,9 +954,11 @@ int main(int argc, char* argv[]) {
                 if (kmbusPollCounter >= KMBUS_POLL_INTERVAL_TICKS) {
                     kmbusPollCounter = 0;
                     // Poll status record from master controller
+                    printf("[DEBUG] KM-Bus: Sending status request to address 0x%02X\n", KMBUS_ADDR_MASTER_STATUS);
                     pthread_mutex_lock(&data_mutex);
                     if (vbus) {
-                        vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+                        bool result = vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+                        printf("[DEBUG] KM-Bus: Poll result: %s\n", result ? "SUCCESS" : "FAILED");
                     }
                     pthread_mutex_unlock(&data_mutex);
                 }

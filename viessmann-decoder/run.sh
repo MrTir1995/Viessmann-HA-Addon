@@ -10,7 +10,7 @@ log_warning() { echo "[WARNING] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
 log_info "======================================"
-log_info " Viessmann Decoder Add-on v2.1.9"
+log_info " Viessmann Decoder Add-on v2.2.0"
 log_info "======================================"
 
 # Read configuration from options.json
@@ -21,6 +21,7 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     BAUD_RATE=$(jq -r '.baud_rate // 9600' "${CONFIG_FILE}")
     PROTOCOL=$(jq -r '.protocol // "vbus"' "${CONFIG_FILE}")
     SERIAL_CONFIG=$(jq -r '.serial_config // "8N1"' "${CONFIG_FILE}")
+    INVERT_SERIAL=$(jq -r '.invert_serial // false' "${CONFIG_FILE}")
     LOG_LEVEL=$(jq -r '.log_level // "info"' "${CONFIG_FILE}")
     USBIP_ENABLE=$(jq -r '.usbip_enable // false' "${CONFIG_FILE}")
     USBIP_HOST=$(jq -r '.usbip_host // ""' "${CONFIG_FILE}")
@@ -32,6 +33,7 @@ else
     BAUD_RATE="9600"
     PROTOCOL="vbus"
     SERIAL_CONFIG="8N1"
+    INVERT_SERIAL="false"
     LOG_LEVEL="info"
     USBIP_ENABLE="false"
     USBIP_HOST=""
@@ -44,6 +46,7 @@ log_info "  Serial Port: ${SERIAL_PORT}"
 log_info "  Baud Rate: ${BAUD_RATE}"
 log_info "  Protocol: ${PROTOCOL}"
 log_info "  Serial Config: ${SERIAL_CONFIG}"
+log_info "  Invert Serial: ${INVERT_SERIAL}"
 log_info "  Log Level: ${LOG_LEVEL}"
 log_info "  USB/IP Enabled: ${USBIP_ENABLE}"
 log_info "  USB/IP Host: ${USBIP_HOST}"
@@ -101,4 +104,5 @@ exec /usr/local/bin/viessmann_webserver \
     -b "${BAUD_RATE}" \
     -t "${PROTOCOL}" \
     -c "${SERIAL_CONFIG}" \
+    -i "${INVERT_SERIAL}" \
     -w 8099

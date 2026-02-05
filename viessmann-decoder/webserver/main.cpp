@@ -37,6 +37,7 @@ struct Config {
     uint8_t protocol;      // 0=VBUS, 1=KW, 2=P300, 3=KM
     unsigned long baudRate;
     uint8_t serialConfig;  // SERIAL_8N1 or SERIAL_8E2
+    bool invertSerial;     // Invert RX/TX signals for M-Bus adapters
     const char* serialPort;
     uint16_t webPort;
 };
@@ -138,6 +139,12 @@ bool attemptConnection(const std::string& port) {
     if (!vbusSerial.begin(port.c_str(), config.baudRate, config.serialConfig)) {
         fprintf(stderr, "Failed to open serial port %s\n", port.c_str());
         return false;
+    }
+    
+    // Set signal inversion if configured (for M-Bus/KM-Bus adapters)
+    vbusSerial.setInvertSignal(config.invertSerial);
+    if (config.invertSerial) {
+        printf("Serial signal inversion enabled (for M-Bus adapters)\n");
     }
 
     pthread_mutex_lock(&data_mutex);
@@ -852,6 +859,7 @@ void printHelp(const char* progname) {
     printf("  -b <baud>      Baud rate (default: 9600)\n");
     printf("  -t <protocol>  Protocol type: vbus, kw, p300, km (default: vbus)\n");
     printf("  -c <config>    Serial config: 8N1, 8E2 (default: 8N1)\n");
+    printf("  -i <invert>    Invert serial signals: true, false (default: false)\n");
     printf("  -w <port>      Web server port (default: 8099)\n");
     printf("  -h             Show this help\n");
 }
@@ -862,11 +870,12 @@ int main(int argc, char* argv[]) {
     config.baudRate = 9600;
     config.protocol = PROTOCOL_VBUS;
     config.serialConfig = SERIAL_8N1;
+    config.invertSerial = false;
     config.webPort = 8099;
 
     // Parse command line arguments
     int opt;
-    while ((opt = getopt(argc, argv, "p:b:t:c:w:h")) != -1) {
+    while ((opt = getopt(argc, argv, "p:b:t:c:i:w:h")) != -1) {
         switch (opt) {
             case 'p':
                 config.serialPort = optarg;
@@ -879,6 +888,9 @@ int main(int argc, char* argv[]) {
                 break;
             case 'c':
                 config.serialConfig = parseSerialConfig(optarg);
+                break;
+            case 'i':
+                config.invertSerial = (strcasecmp(optarg, "true") == 0 || strcmp(optarg, "1") == 0);
                 break;
             case 'w':
                 config.webPort = atoi(optarg);

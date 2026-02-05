@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <string.h>
 
-LinuxSerial::LinuxSerial() : fd(-1) {
+LinuxSerial::LinuxSerial() : fd(-1), invertSignal(false) {
 }
 
 LinuxSerial::~LinuxSerial() {
@@ -67,11 +67,21 @@ int LinuxSerial::read() {
     ssize_t n = ::read(fd, &data, 1);
     if (n <= 0) return -1;
     
+    // Invert signal if enabled (for M-Bus/KM-Bus adapters with inverted logic)
+    if (invertSignal) {
+        data = ~data;  // Bitwise NOT (XOR 0xFF)
+    }
+    
     return data;
 }
 
 size_t LinuxSerial::write(uint8_t data) {
     if (fd < 0) return 0;
+    
+    // Invert signal if enabled (for M-Bus/KM-Bus adapters with inverted logic)
+    if (invertSignal) {
+        data = ~data;  // Bitwise NOT (XOR 0xFF)
+    }
     
     ssize_t n = ::write(fd, &data, 1);
     return (n > 0) ? n : 0;
@@ -79,6 +89,17 @@ size_t LinuxSerial::write(uint8_t data) {
 
 size_t LinuxSerial::write(const uint8_t *buffer, size_t size) {
     if (fd < 0) return 0;
+    
+    // Invert signal if enabled (for M-Bus/KM-Bus adapters with inverted logic)
+    if (invertSignal) {
+        uint8_t *inverted = new uint8_t[size];
+        for (size_t i = 0; i < size; i++) {
+            inverted[i] = ~buffer[i];  // Bitwise NOT
+        }
+        ssize_t n = ::write(fd, inverted, size);
+        delete[] inverted;
+        return (n > 0) ? n : 0;
+    }
     
     ssize_t n = ::write(fd, buffer, size);
     return (n > 0) ? n : 0;

@@ -19,6 +19,10 @@ public:
     bool begin(const char* port, unsigned long baud, uint8_t config = SERIAL_8N1);
     void end();
     
+    // Signal inversion control (for M-Bus/KM-Bus adapters with inverted logic)
+    void setInvertSignal(bool invert) { invertSignal = invert; }
+    bool getInvertSignal() const { return invertSignal; }
+    
     // Stream interface implementation
     int available() override;
     int read() override;
@@ -32,6 +36,7 @@ public:
 private:
     int fd;
     struct termios oldtio;
+    bool invertSignal;
     
     bool configure(unsigned long baud, uint8_t config);
     speed_t getBaudRate(unsigned long baud);

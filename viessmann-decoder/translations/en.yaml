@@ -25,6 +25,12 @@ configuration:
     items:
       8N1: "8N1 (8 data bits, no parity, 1 stop bit) - for VBUS, KM-Bus"
       8E2: "8E2 (8 data bits, even parity, 2 stop bits) - for KW-Bus, P300"
+  invert_serial:
+    name: Invert Serial Signals
+    description: >-
+      Enable signal inversion for M-Bus/KM-Bus USB adapters with inverted logic.
+      If you see only 0x00 or 0x80 bytes in logs but the adapter LED flickers,
+      enable this option. This performs bitwise NOT (XOR 0xFF) on all RX/TX data.
   log_level:
     name: Log Level
     description: >-

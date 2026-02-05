@@ -1,5 +1,5 @@
 name: Viessmann Decoder
-version: 2.1.9
+version: 2.2.0
 slug: viessmann-decoder
 description: Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, and KM-Bus protocols
 arch:
@@ -41,6 +41,7 @@ options:
   baud_rate: 9600
   protocol: vbus
   serial_config: 8N1
+  invert_serial: false
   log_level: info
   usbip_enable: false
   usbip_host: ""
@@ -51,6 +52,7 @@ schema:
   baud_rate: list(2400|4800|9600|19200|38400|115200)
   protocol: list(vbus|kw|p300|km)
   serial_config: list(8N1|8E2)
+  invert_serial: bool?
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   usbip_enable: bool
   usbip_host: str?

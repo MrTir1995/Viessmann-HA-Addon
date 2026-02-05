@@ -6,7 +6,7 @@ LABEL \
     io.hass.name="Viessmann Decoder" \
     io.hass.description="Viessmann VBUS/KW/P300/KM-Bus protocol decoder" \
     io.hass.type="addon" \
-    io.hass.version="2.1.6"
+    io.hass.version="2.1.7"
 
 # CRITICAL: Disable s6-overlay - HA Supervisor uses tini as PID 1
 # Setting S6_CMD_WAIT_FOR_SERVICES=0 and using direct CMD execution
@@ -88,31 +88,31 @@ RUN rm -rf /build /tmp/* /var/cache/apk/* /root/.cache && \
 RUN apk add --no-cache socat bash && \
     mkdir -p /usr/local/bin && \
     printf '#!/bin/bash\n\
-REMOTE_HOST="$1"\n\
-REMOTE_PORT="${2:-3240}"\n\
-BUSID="$3"\n\
-\n\
-if [[ -z "$REMOTE_HOST" ]] || [[ -z "$BUSID" ]]; then\n\
+    REMOTE_HOST="$1"\n\
+    REMOTE_PORT="${2:-3240}"\n\
+    BUSID="$3"\n\
+    \n\
+    if [[ -z "$REMOTE_HOST" ]] || [[ -z "$BUSID" ]]; then\n\
     echo "Usage: $0 <host> [port] <busid>"\n\
     exit 1\n\
-fi\n\
-\n\
-if command -v socat >/dev/null 2>&1; then\n\
+    fi\n\
+    \n\
+    if command -v socat >/dev/null 2>&1; then\n\
     echo "USB/IP: Connecting via socat to $REMOTE_HOST:$REMOTE_PORT device $BUSID"\n\
     socat UNIX-LISTEN:/dev/shm/usbip_${BUSID}.sock TCP:${REMOTE_HOST}:${REMOTE_PORT} &\n\
     sleep 1\n\
     exit 0\n\
-fi\n\
-\n\
-if command -v nc >/dev/null 2>&1; then\n\
+    fi\n\
+    \n\
+    if command -v nc >/dev/null 2>&1; then\n\
     echo "USB/IP: Connecting via nc to $REMOTE_HOST:$REMOTE_PORT device $BUSID"\n\
     nc -k -l -p 3241 -c "nc $REMOTE_HOST $REMOTE_PORT" &\n\
     sleep 1\n\
     exit 0\n\
-fi\n\
-\n\
-echo "ERROR: Neither socat nor nc available for USB/IP forwarding."\n\
-exit 1\n' > /usr/local/bin/usbip_client.sh && \
+    fi\n\
+    \n\
+    echo "ERROR: Neither socat nor nc available for USB/IP forwarding."\n\
+    exit 1\n' > /usr/local/bin/usbip_client.sh && \
     chmod 755 /usr/local/bin/usbip_client.sh
 
 # Copy the main run script (NOT using s6-overlay, direct execution under tini)

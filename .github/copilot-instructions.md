@@ -5,6 +5,7 @@
 This is a **Home Assistant Add-on** that decodes Viessmann heating system protocols (VBUS, KW-Bus, P300, KM-Bus) and exposes data via a web interface. The project bridges C++ hardware protocol libraries with a Linux web server for Home Assistant integration.
 
 **Key Components:**
+
 - **Core Protocol Library** ([viessmann-decoder/src/vbusdecoder.{cpp,h}](viessmann-decoder/src/vbusdecoder.h)) - Multi-protocol decoder supporting 4 Viessmann/RESOL protocols
 - **Linux Abstraction Layer** ([viessmann-decoder/linux/src/](viessmann-decoder/linux/src/)) - Arduino API compatibility for Linux (LinuxSerial, Arduino timing functions)
 - **Web Server** ([viessmann-decoder/webserver/main.cpp](viessmann-decoder/webserver/main.cpp)) - C++ libmicrohttpd-based HTTP server with JSON API
@@ -38,6 +39,7 @@ Access the addon web UI at `http://localhost:7123` (dev container port forwardin
 ### Version Release Process
 
 **CRITICAL:** Version must be synchronized across 3 files:
+
 1. [viessmann-decoder/config.yaml](viessmann-decoder/config.yaml) - `version: X.Y.Z`
 2. [viessmann-decoder/build.json](viessmann-decoder/build.json) - `io.hass.version: X.Y.Z`
 3. [viessmann-decoder/Dockerfile](viessmann-decoder/Dockerfile) - `io.hass.version="X.Y.Z"`
@@ -49,6 +51,7 @@ Follow [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for complete release steps.
 ### Multi-Architecture Docker Builds
 
 The add-on **must support 5 architectures** (amd64, aarch64, armhf, armv7, i386). All builds use Alpine Linux 3.19 base. The Dockerfile includes:
+
 - Single-layer C++ compilation with optimization flags (`-O2 -std=c++17`)
 - Static binary stripping for size reduction
 - Build dependency cleanup to minimize image size
@@ -64,6 +67,7 @@ VBUSDecoder vbus(PROTOCOL_VBUS); // or PROTOCOL_KW, PROTOCOL_P300, PROTOCOL_KM
 ### Serial Configuration
 
 **Two-part serial setup:**
+
 1. **Baud Rate** - Protocol-dependent (VBUS=9600, KW/P300=4800)
 2. **Serial Config** - `SERIAL_8N1` or `SERIAL_8E2` (affects parity/stop bits)
 
@@ -72,6 +76,7 @@ Both configured in [config.yaml](viessmann-decoder/config.yaml) schema validatio
 ### Linux Serial Compatibility Layer
 
 The library was originally Arduino-based. [linux/src/Arduino.cpp](viessmann-decoder/linux/src/Arduino.cpp) and [linux/src/LinuxSerial.cpp](viessmann-decoder/linux/src/LinuxSerial.cpp) provide Arduino API compatibility:
+
 - `millis()` → Linux `gettimeofday()`
 - `Serial.begin()` → termios serial port configuration
 - `delay()` → `usleep()`
@@ -95,6 +100,7 @@ The `VBUSDecoder` class automatically discovers devices on the bus and stores th
 ### Home Assistant Supervisor API
 
 The add-on uses Home Assistant Supervisor's:
+
 - **Ingress** - Web UI embedded in HA interface (port 8099)
 - **Watchdog** - Health check endpoint `/health` monitors addon status
 - **Configuration** - Options exposed in HA UI via `config.yaml` schema

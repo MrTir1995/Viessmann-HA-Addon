@@ -947,7 +947,7 @@ int main(int argc, char* argv[]) {
     while (running) {
         if (serialConnected && vbus && deviceCompatible) {
             vbus->loop();
-            
+
             // KM-Bus active polling: Request status data periodically
             if (config.protocol == PROTOCOL_KM) {
                 kmbusPollCounter++;

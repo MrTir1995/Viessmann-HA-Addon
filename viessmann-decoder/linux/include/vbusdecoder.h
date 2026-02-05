@@ -3,7 +3,7 @@
  * Created by Martin Saidl January, 2018
  * Extended for multi-protocol support January, 2026
  */
- 
+
 #pragma once
 #ifndef VBUSDecoder_h
 #define VBUSDecoder_h
@@ -114,11 +114,11 @@ enum KMBusMode: uint8_t {
 #define KMBUS_MAX_CIRCUITS 3
 
 class VBUSDecoder {
-  
+
   public:
     VBUSDecoder(Stream* serial);
     ~VBUSDecoder();
-    
+
     void begin(ProtocolType protocol = PROTOCOL_VBUS);
     void loop();
     float const getTemp(uint8_t idx) const;
@@ -135,20 +135,20 @@ class VBUSDecoder {
     uint16_t const getHeatQuantity() const;
     uint8_t const getSystemVariant() const;
     ProtocolType const getProtocol() const;
-    
+
     // Bus participant discovery and management
     void enableAutoDiscovery(bool enable = true);
     bool isAutoDiscoveryEnabled() const;
     uint8_t getParticipantCount() const;
     const BusParticipant* getParticipant(uint8_t idx) const;
     const BusParticipant* getParticipantByAddress(uint16_t address) const;
-    bool addParticipant(uint16_t address, const char* name = nullptr, 
-                       uint8_t tempChannels = 0, uint8_t pumpChannels = 0, 
+    bool addParticipant(uint16_t address, const char* name = nullptr,
+                       uint8_t tempChannels = 0, uint8_t pumpChannels = 0,
                        uint8_t relayChannels = 0);
     bool removeParticipant(uint16_t address);
     void clearParticipants();
     uint16_t getCurrentSourceAddress() const;
-    
+
     // KM-Bus specific methods (only available when PROTOCOL_KM is active)
     bool getKMBusBurnerStatus() const;      // Get burner on/off status
     bool getKMBusMainPumpStatus() const;    // Get main circulation pump status
@@ -159,13 +159,13 @@ class VBUSDecoder {
     float getKMBusOutdoorTemp() const;      // Get outdoor temperature
     float getKMBusSetpointTemp() const;     // Get setpoint temperature
     float getKMBusDepartureTemp() const;    // Get departure/flow temperature
-    
+
     // Control commands (KM-Bus protocol)
     bool setKMBusMode(uint8_t mode);        // Set operating mode (off/night/day/eco/party)
     bool setKMBusSetpoint(uint8_t circuit, float temperature);  // Set temperature setpoint
     bool setKMBusEcoMode(bool enable);      // Enable/disable eco mode
     bool setKMBusPartyMode(bool enable);    // Enable/disable party mode
-    
+
     // KM-Bus polling (request data from controller)
     bool pollKMBusStatusRecord(uint8_t recordAddress = KMBUS_ADDR_MASTER_STATUS);  // Request status record from controller
 
@@ -201,13 +201,13 @@ class VBUSDecoder {
     uint32_t _operatingHours[8];
     uint16_t _heatQuantity;
     uint8_t _systemVariant;
-    
+
     // Bus participant discovery
     static const uint8_t MAX_PARTICIPANTS = 16;
     BusParticipant _participants[MAX_PARTICIPANTS];
     uint8_t _participantCount;
     bool _autoDiscoveryEnabled;
-    
+
     // KM-Bus specific data storage
     uint8_t _kmBusMode;               // Current operating mode
     bool _kmBusBurnerStatus;          // Burner on/off
@@ -218,11 +218,11 @@ class VBUSDecoder {
     float _kmBusOutdoorTemp;          // Outdoor temperature
     float _kmBusSetpointTemp;         // Setpoint temperature
     float _kmBusDepartureTemp;        // Departure/flow temperature
-    
+
     void _updateParticipant(uint16_t address);
     int8_t _findParticipantIndex(uint16_t address) const;
     void _configureParticipantChannels(BusParticipant* participant, uint16_t address);
-    
+
     // Common utility functions
     uint8_t _calcCRC(const uint8_t *Buffer, uint8_t Offset, uint8_t Length);
     void _septetInject(uint8_t *Buffer, uint8_t Offset, uint8_t Length);
@@ -239,17 +239,17 @@ class VBUSDecoder {
     void _kwSyncHandler();
     void _kwReceiveHandler();
     void _kwDecodeHandler();
-    
+
     // P300 protocol handlers
     void _p300SyncHandler();
     void _p300ReceiveHandler();
     void _p300DecodeHandler();
-    
+
     // KM-Bus protocol handlers
     void _kmSyncHandler();
     void _kmReceiveHandler();
     void _kmDecodeHandler();
-    
+
     // KM-Bus helper functions
     uint16_t _kmCalcCRC16(const uint8_t *data, uint8_t start, uint16_t length);
     uint8_t _kmReflect8(uint8_t data);
@@ -263,13 +263,13 @@ class VBUSDecoder {
     void _vitosolic200Decoder();
     void _deltaSolBXDecoder();
     void _deltaSolMXDecoder();
-    
+
     // KW-Bus device decoders
     void _kwDefaultDecoder();
-    
+
     // P300 device decoders
     void _p300DefaultDecoder();
-    
+
     // KM-Bus device decoders
     void _kmDefaultDecoder();
 };

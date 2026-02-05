@@ -945,10 +945,12 @@ int main(int argc, char* argv[]) {
     int kmbusPollCounter = 0;  // Counter for KM-Bus polling
 
     while (running) {
-        if (serialConnected && vbus && deviceCompatible) {
+        // Always call loop() if connected (KM-Bus needs it even when not compatible yet)
+        if (serialConnected && vbus) {
             vbus->loop();
-
+            
             // KM-Bus active polling: Request status data periodically
+            // IMPORTANT: Must run even when deviceCompatible=false to receive first frames!
             if (config.protocol == PROTOCOL_KM) {
                 kmbusPollCounter++;
                 if (kmbusPollCounter >= KMBUS_POLL_INTERVAL_TICKS) {
@@ -956,14 +958,14 @@ int main(int argc, char* argv[]) {
                     // Poll status record from master controller
                     printf("[DEBUG] KM-Bus: Sending status request to address 0x%02X\n", KMBUS_ADDR_MASTER_STATUS);
                     pthread_mutex_lock(&data_mutex);
-                    if (vbus) {
-                        bool result = vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
-                        printf("[DEBUG] KM-Bus: Poll result: %s\n", result ? "SUCCESS" : "FAILED");
-                    }
+                    bool result = vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+                    printf("[DEBUG] KM-Bus: Poll result: %s\n", result ? "SUCCESS" : "FAILED");
                     pthread_mutex_unlock(&data_mutex);
                 }
             }
-        } else {
+        }
+        
+        if (!serialConnected || !vbus || !deviceCompatible) {
             // Try to reconnect periodically
             reconnectCounter++;
             if (reconnectCounter >= RECONNECT_INTERVAL_TICKS) {

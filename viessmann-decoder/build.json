@@ -17,7 +17,7 @@
     "io.hass.description": "Viessmann VBUS/KW/P300/KM-Bus protocol decoder with web interface",
     "io.hass.arch": "aarch64|amd64|armhf|armv7|i386",
     "io.hass.type": "addon",
-    "io.hass.version": "2.1.8"
+    "io.hass.version": "2.1.9"
   },
   "args": {
     "TEMPIO_VERSION": "2023.01.0"

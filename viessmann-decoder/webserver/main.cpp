@@ -123,6 +123,9 @@ bool waitForCompatibility(VBUSDecoder* decoder) {
         return false;
     }
     for (int i = 0; i < COMPATIBILITY_ATTEMPTS && running; ++i) {
+        if (config.protocol == PROTOCOL_KM && i % 100 == 0) {
+            decoder->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+        }
         decoder->loop();
         if (decoder->isReady() && decoder->getVbusStat()) {
             return true;
@@ -441,10 +444,12 @@ const char* getDashboardHTML() {
 const char* getStatusHTML() {
     static thread_local char html[16384]; // Thread-local buffer for thread-safe access
 
+    pthread_mutex_lock(&data_mutex);
     // Check if vbus is valid
     if (!vbus) {
         snprintf(html, sizeof(html),
                 "<!DOCTYPE html><html><body><h1>Error: System not initialized</h1></body></html>");
+        pthread_mutex_unlock(&data_mutex);
         return html;
     }
 
@@ -525,6 +530,7 @@ const char* getStatusHTML() {
         // Buffer is already null-terminated and truncated
     }
 
+    pthread_mutex_unlock(&data_mutex);
     return html;
 }
 
@@ -650,6 +656,10 @@ const char* getSettingsHTML() {
 const char* getDevicesHTML() {
     static thread_local char html[16384];
 
+    pthread_mutex_lock(&data_mutex);
+    const uint8_t detectedDevices = vbus ? vbus->getParticipantCount() : 0;
+    pthread_mutex_unlock(&data_mutex);
+
     int written = snprintf(html, sizeof(html) - 1,
     "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
     "<title>Device Configuration - Viessmann Decoder</title>"
@@ -755,7 +765,7 @@ const char* getDevicesHTML() {
     "</div>"
     "</div>"
     "</body></html>",
-    vbus->isReady() ? 1 : 0);
+    detectedDevices);
 
     html[sizeof(html) - 1] = '\0';
     if (written < 0 || written >= (int)(sizeof(html) - 1)) {
@@ -957,6 +967,9 @@ int main(int argc, char* argv[]) {
     int kmbusPollCounter = 0;  // Counter for KM-Bus polling
 
     while (running) {
+        bool shouldReconnect;
+
+        pthread_mutex_lock(&data_mutex);
         // Always call loop() if connected (KM-Bus needs it even when not compatible yet)
         if (serialConnected && vbus) {
             vbus->loop();
@@ -976,8 +989,10 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        
-        if (!serialConnected || !vbus || !deviceCompatible) {
+        shouldReconnect = !serialConnected || !vbus || !deviceCompatible;
+        pthread_mutex_unlock(&data_mutex);
+
+        if (shouldReconnect) {
             // Try to reconnect periodically
             reconnectCounter++;
             if (reconnectCounter >= RECONNECT_INTERVAL_TICKS) {

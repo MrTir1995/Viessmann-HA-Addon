@@ -420,7 +420,9 @@ void VBUSDecoder::_vbusReceiveHandler() {
   uint8_t crc;
 
   while (_stream->available() > 0) {
-    uint8_t rcvByte = _stream->read();
+    int readByte = _stream->read();
+    if (readByte < 0) return;
+    uint8_t rcvByte = (uint8_t)readByte;
 
     // MSB is set - according to protocol description the receiving has to be stopped
     if (rcvByte >= 0x80) {
@@ -428,45 +430,55 @@ void VBUSDecoder::_vbusReceiveHandler() {
       return;
     }
 
-    _rcvBuffer[_rcvBufferIdx] = rcvByte;
-    _rcvBufferIdx++;
-  }
-
-  // Test if there is frame header stored in receive buffer
-  if ((_rcvBufferIdx > 10) && (_frameCnt == 0)) {
-    _headerDecoder();
-
-    // Only protocol 1.0 will be decoded
-    if (_protocolVer != 1) {
-      _state = SYNC;
-      return;
-    }
-
-    crc = _calcCRC(_rcvBuffer, 0, 9);
-
-    // if CRC fails go to ERROR state
-    if (crc != 0) {
+    if (_rcvBufferIdx >= MAX_BUFFER_SIZE) {
       _state = ERROR;
       return;
     }
 
-    _errorFlag = false;
-  }
+    _rcvBuffer[_rcvBufferIdx] = rcvByte;
+    _rcvBufferIdx++;
 
+    // The header is nine bytes after the sync byte.
+    if (_frameLen == 0 && _rcvBufferIdx >= 9) {
+      _headerDecoder();
 
-  // Test if whole frame has been already received
-  if ((_rcvBufferIdx == _frameLen - 1)) {
-    for (uint8_t i=0; i < _frameCnt; i++) {
-      crc = _calcCRC(_rcvBuffer, (i * 6) + 10, 6);
-
-      // Go to error state if CRC fails
-      if  (crc != 0) {
+      if (_frameCnt == 0 || _frameCnt > (MAX_BUFFER_SIZE - 9) / 6) {
         _state = ERROR;
         return;
       }
+
+      // Only protocol 1.0 will be decoded
+      if (_protocolVer != 1) {
+        _state = SYNC;
+        return;
+      }
+
+      crc = _calcCRC(_rcvBuffer, 0, 9);
+
+      // if CRC fails go to ERROR state
+      if (crc != 0) {
+        _state = ERROR;
+        return;
+      }
+
+      _errorFlag = false;
     }
-    _lastMillis = millis();
-    _state = DECODE;
+
+    // Stop at the end of this frame so queued datagrams remain available.
+    if (_frameLen > 0 && _rcvBufferIdx == _frameLen - 1) {
+      for (uint8_t i = 0; i < _frameCnt; i++) {
+        crc = _calcCRC(_rcvBuffer, (i * 6) + 9, 6);
+
+        // Go to ERROR state if CRC fails
+        if (crc != 0) {
+          _state = ERROR;
+          return;
+        }
+      }
+      _lastMillis = millis();
+      _state = DECODE;
+      return;
+    }
   }
 }
 
@@ -498,8 +510,9 @@ void VBUSDecoder::_vbusDecodeHandler() {
     }
 
     _readyFlag = true;
-    _state = SYNC;
   }
+
+  _state = SYNC;
 }
 
 // Error handler
@@ -1479,4 +1492,3 @@ void VBUSDecoder::_configureParticipantChannels(BusParticipant* participant, uin
       break;
   }
 }
-

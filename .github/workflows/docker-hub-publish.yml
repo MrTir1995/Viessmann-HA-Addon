@@ -34,7 +34,7 @@ jobs:
         run: |
           VERSION="${REQUESTED_VERSION:-${GITHUB_REF#refs/tags/}}"
           VERSION="${VERSION#v}"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && ${#VERSION} -le 128 ]] || exit 1
           CONFIG_VERSION=$(awk '/^version:/ {print $2}' viessmann-decoder/config.yaml)
           BUILD_VERSION=$(jq -r '.labels["io.hass.version"]' viessmann-decoder/build.json)
           DOCKER_VERSION=$(sed -n 's/.*io.hass.version="\([^"]*\)".*/\1/p' viessmann-decoder/Dockerfile)

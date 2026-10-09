@@ -31,6 +31,36 @@ Die Einstellungen lassen sich unter `/settings` ändern. Gespeicherte Werte
 werden nach einem Neustart des Containers angewendet und bleiben im persistenten
 `/data`-Volume erhalten.
 
+### Mehrere serielle Adapter gleichzeitig
+
+Unter `/settings` zeigt der Bereich **Serielle Adapter** die konfigurierten
+Verbindungen. Über **+** lässt sich ein weiterer Adapter mit eigenem Gerätepfad,
+Protokoll, Baudrate, Parität, Signalinvertierung und Vitotrol-Modell/Slot hinzufügen.
+Die Adapter verarbeiten ihre Busdaten unabhängig und gleichzeitig; derselbe
+serielle Anschluss darf nicht mehrfach verwendet werden. Insgesamt sind bis zu
+acht Adapter möglich, einschließlich des ersten Adapters.
+
+Bei Docker müssen zusätzliche Geräte **vorher** an den Container durchgereicht
+werden. Der „+“-Button kann keine Docker-Gerätefreigabe auf dem Host verändern.
+Beispielsweise die bestehende `devices`-Liste in Compose ergänzen:
+
+```yaml
+devices:
+  - "${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
+  - "/dev/ttyUSB1:/dev/ttyUSB1"
+```
+
+Danach den Container neu erstellen und `/dev/ttyUSB1` in der Oberfläche
+konfigurieren. Die zusätzlichen Adapterkonfigurationen bleiben im `/data`-Volume
+erhalten. Änderungen vorhandener Adaptereinstellungen werden nach dem
+Container-Neustart wirksam; neu hinzugefügte Adapter starten direkt.
+Im Add-on muss der Supervisor Zugriff auf die jeweiligen Geräte erlauben.
+
+Der erste Adapter bleibt unter der bisherigen Basis-URL erreichbar. Jeder Adapter
+hat zusätzlich einen getrennten API-Pfad `/adapters/<id>`; die Oberfläche zeigt
+diesen Pfad an. Für Home Assistant pro Adapter einen Integrationseintrag mit
+dieser Basis-URL anlegen. Details: [INTEGRATION.md](INTEGRATION.md#custom-integration-empfohlen).
+
 ### Container über die Weboberfläche neu starten
 
 Der Button **Container neu starten** im Dashboard und unter `/settings`
@@ -103,6 +133,9 @@ Für verschlüsselten Zugriff einen HTTPS-Reverse-Proxy verwenden.
 
 **Home Assistant:** Die mitgelieferte Custom Integration unter
 `custom_components/viessmann_decoder` erstellt Entitäten automatisch.
+Im Vitotrol-Modus stehen auch lokale Temperaturvorgaben, Betriebsartauswahl
+und Party-/Sparbetrieb-Schalter über die API bereit. Unbestätigte Messwert-
+und Störungszuordnungen werden nicht als gesicherte Anlagendaten ausgegeben.
 Installation und Einrichtung: [INTEGRATION.md](INTEGRATION.md#custom-integration-empfohlen).
 
 ## ✨ Features

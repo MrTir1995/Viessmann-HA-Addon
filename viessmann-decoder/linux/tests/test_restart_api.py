@@ -7,6 +7,7 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -79,6 +80,8 @@ class RestartRequests:
 @unittest.skipUnless(os.environ.get("VIESSMANN_WEBSERVER"), "Set VIESSMANN_WEBSERVER")
 class HostRestartTests(RestartRequests, unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix=".restart-api-", dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             self.port = reservation.getsockname()[1]
@@ -86,6 +89,7 @@ class HostRestartTests(RestartRequests, unittest.TestCase):
             [str(Path(os.environ["VIESSMANN_WEBSERVER"]).resolve()),
              "-p", "/nonexistent-restart-test-serial", "-w", str(self.port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={**os.environ, "VIESSMANN_DATA_DIR": directory.name},
         )
         self.addCleanup(self.stop)
         self.wait_for_health()

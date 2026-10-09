@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Mit Viessmann Decoder verbinden",
-        "description": "Gib die Basis-URL des Decoders ein, zum Beispiel http://192.168.1.50:8099 (ohne /data). Die Integration liest nur Daten und ändert keine Decoder-Einstellungen.",
+        "description": "Gib die Basis-URL des Decoders ein, zum Beispiel http://192.168.1.50:8099 (ohne /data). Unterstützte Fernbedienungs-Einstellungen sind lokal angefordert, nicht vom Regler bestätigt.",
         "data": {"url": "Decoder-URL"}
       }
     },
@@ -22,19 +22,43 @@
       "status": {"name": "Status"},
       "protocol": {"name": "Protokoll"},
       "serial_port": {"name": "Serielle Schnittstelle"},
-      "remote_room_temperature": {"name": "Raumtemperatur"},
-      "remote_desired_room_temperature": {"name": "Raumsolltemperatur"},
-      "remote_mode": {"name": "Betriebsart Fernbedienung"},
+      "remote_room_temperature": {"name": "Lokal vorgegebene Raumtemperatur (nicht gemessen)"},
+      "remote_desired_room_temperature": {"name": "Lokal angeforderte normale Raumtemperatur"},
+      "remote_mode": {"name": "Lokal angeforderte Betriebsart"},
       "remote_slot": {"name": "Steckplatz Fernbedienung"},
       "remote_model": {"name": "Modell Fernbedienung"},
-      "remote_last_master_dataset": {"name": "Letzter Master-Datensatz"}
+      "remote_last_master_dataset": {"name": "Letzter Master-Datensatz"},
+      "remote_reduced_room_temperature": {"name": "Lokal angeforderte reduzierte Raumtemperatur"},
+      "remote_party_room_temperature": {"name": "Lokal angeforderte Party-Raumtemperatur"},
+      "remote_outside_temperature": {"name": "Verifizierte empfangene Außentemperatur"},
+      "remote_pending_commands": {"name": "Ausstehende Befehle"},
+      "remote_crc_errors": {"name": "CRC-Fehler"},
+      "remote_malformed_frames": {"name": "Ungültige Frames"},
+      "remote_unknown_commands": {"name": "Unbekannte Befehle"},
+      "remote_status_dataset_age_ms": {"name": "Alter des empfangenen Status (ms)"}
     },
     "binary_sensor": {
       "relay": {"name": "Relais {channel}"},
       "serial_connection": {"name": "Serielle Verbindung"},
       "data_ready": {"name": "Daten bereit"},
       "compatibility": {"name": "Gerät kompatibel"},
-      "remote_online": {"name": "Fernbedienung online"}
+      "remote_online": {"name": "Fernbedienung online"},
+      "remote_controller_fault": {"name": "Sammelstörung"},
+      "remote_heating_enabled": {"name": "Verifizierte empfangene Heizfreigabe"},
+      "remote_communication_problem": {"name": "Kommunikationsproblem (keine Heizungsstörung)"}
+    },
+    "number": {
+      "remote_room_temperature_setting": {"name": "Lokale Raumtemperatur vorgeben (nicht gemessen)"},
+      "remote_desired_room_temperature_setting": {"name": "Normale Raumtemperatur anfordern"},
+      "remote_reduced_room_temperature_setting": {"name": "Reduzierte Raumtemperatur anfordern"},
+      "remote_party_room_temperature_setting": {"name": "Partytemperatur – aktiviert Partybetrieb"}
+    },
+    "select": {
+      "remote_base_mode_setting": {"name": "Lokal angeforderter Grundbetrieb", "state": {"off": "Abschalten", "water": "Warmwasser", "heat_water": "Heizen und Warmwasser"}}
+    },
+    "switch": {
+      "remote_party_setting": {"name": "Lokal angeforderter Partybetrieb"},
+      "remote_economy_setting": {"name": "Lokal angeforderter Sparbetrieb"}
     }
   }
 }

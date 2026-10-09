@@ -37,7 +37,28 @@ def payload(protocol=0):
     return data
 
 
+def extended_payload(profile="wifi"):
+    data = payload(4)
+    data["remote"].update(
+        profile=profile, mode=202, reduced_room_temperature=16,
+        party_room_temperature=23, requested_party_mode=False,
+        requested_economy_mode=False, pending_commands=0, crc_errors=0,
+        malformed_frames=0, unknown_commands=0, outside_temperature=None,
+        heating_enabled=None, measurements_verified=False, controller_fault=None,
+        status_dataset_age_ms=None,
+    )
+    return data
+
+
 class UrlTests(unittest.TestCase):
+    def test_adapter_base_paths_are_preserved_and_distinct(self):
+        primary = DATA.normalize_url("HTTP://DECODER:8099/adapters/primary/")
+        secondary = DATA.normalize_url("http://decoder:8099/adapters/adapter_1")
+        self.assertEqual(primary, "http://decoder:8099/adapters/primary")
+        self.assertEqual(secondary, "http://decoder:8099/adapters/adapter_1")
+        self.assertNotEqual(primary, secondary)
+        self.assertNotEqual(primary, DATA.normalize_url("http://decoder:8099"))
+
     def test_normalization_and_idempotence(self):
         cases = {
             " HTTP://DECODER.local.:80/ ": "http://decoder.local",
@@ -65,6 +86,66 @@ class UrlTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_offline_remote_zero_snapshot_does_not_fail_poll(self):
+        data = extended_payload()
+        data.update(serialConnected=False, compatible=False, ready=False)
+        data["remote"].update(
+            online=False, room_temperature=0, desired_room_temperature=0,
+            reduced_room_temperature=0, party_room_temperature=0, mode=0,
+            last_master_dataset=0,
+        )
+        self.assertEqual(DATA.validate_data(data), data)
+
+    def test_unverified_candidates_are_not_measurements(self):
+        source = extended_payload()
+        expected = copy.deepcopy(source)
+        source["remote"].update(
+            outside_temperature_candidate=25, heating_enabled_candidate=True,
+        )
+        validated = DATA.validate_data(source)
+        self.assertEqual(validated, expected)
+        self.assertIsNone(validated["remote"]["outside_temperature"])
+        self.assertIsNone(validated["remote"]["heating_enabled"])
+        self.assertIsNone(validated["remote"]["controller_fault"])
+        self.assertFalse(validated["remote"]["measurements_verified"])
+
+    def test_optional_remote_extensions_and_nullable_measurements(self):
+        for profile in ("wifi", "openv"):
+            data = extended_payload(profile)
+            self.assertEqual(DATA.validate_data(data), data)
+            for key in set(data["remote"]) - set(payload(4)["remote"]):
+                old = copy.deepcopy(data)
+                del old["remote"][key]
+                self.assertEqual(DATA.validate_data(old), old)
+        data["remote"].update(
+            outside_temperature=9.3, heating_enabled=True, controller_fault=False,
+            measurements_verified=True, status_dataset_age_ms=180000,
+        )
+        self.assertEqual(DATA.validate_data(data), data)
+
+    def test_invalid_remote_extensions(self):
+        cases = {
+            "profile": [None, 1, {}, [], "unknown"],
+            "reduced_room_temperature": [None, True, "16", float("nan")],
+            "party_room_temperature": [None, float("inf")],
+            "outside_temperature": [True, "9", float("nan")],
+            "requested_party_mode": [None, 1],
+            "requested_economy_mode": [None, "false"],
+            "measurements_verified": [None, 1],
+            "heating_enabled": [0, "true"],
+            "controller_fault": [1, "false"],
+        }
+        for key in DATA.REMOTE_COUNTERS + ("status_dataset_age_ms",):
+            cases[key] = [-1, 1.5, True, "0"]
+            if key != "status_dataset_age_ms":
+                cases[key].append(None)
+        for key, values in cases.items():
+            for value in values:
+                data = extended_payload()
+                data["remote"][key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(DATA.InvalidDecoderData):
+                    DATA.validate_data(data)
+
     def test_all_protocols(self):
         for protocol in range(5):
             with self.subTest(protocol=protocol):
@@ -167,3 +248,34 @@ class MetadataTests(unittest.TestCase):
         self.assertTrue(manifest["config_flow"])
         self.assertEqual(manifest["requirements"], [])
         self.assertEqual(manifest["iot_class"], "local_polling")
+
+
+class CommandTests(unittest.TestCase):
+    def test_temperature_limits_and_modes(self):
+        for field, (minimum, maximum, step) in DATA.TEMPERATURE_LIMITS.items():
+            for value in (minimum, maximum, minimum + step):
+                command = {field: value}
+                if field == "party_room_temperature":
+                    command["mode"] = "party_on"
+                self.assertEqual(DATA.validate_command(command), command)
+        for mode in DATA.COMMAND_MODES:
+            self.assertEqual(DATA.validate_command({"mode": mode}), {"mode": mode})
+
+    def test_rejects_unknown_fields_invalid_numbers_steps_and_party_without_mode(self):
+        commands = [
+            None, [], {}, {"profile": "wifi"}, {"unknown": 1}, {"mode": "bogus"},
+            {"mode": None}, {"mode": []}, {"party_room_temperature": 22},
+            {"party_room_temperature": 22, "mode": "heat_water"},
+        ]
+        for field, (minimum, maximum, step) in DATA.TEMPERATURE_LIMITS.items():
+            for value in (
+                minimum - step, maximum + step, minimum + step / 2,
+                True, None, "20", float("inf"), float("nan"), 10**1000,
+            ):
+                command = {field: value}
+                if field == "party_room_temperature":
+                    command["mode"] = "party_on"
+                commands.append(command)
+        for command in commands:
+            with self.subTest(command=command), self.assertRaises(DATA.InvalidDecoderData):
+                DATA.validate_command(command)

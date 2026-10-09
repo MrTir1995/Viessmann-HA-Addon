@@ -1,4 +1,4 @@
-"""Read-only Home Assistant integration for Viessmann Decoder."""
+"""Home Assistant integration for Viessmann Decoder."""
 
 from homeassistant.const import Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -7,7 +7,9 @@ from .api import DecoderApi
 from .const import CONF_URL, DOMAIN
 from .coordinator import DecoderCoordinator
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [
+    Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH,
+]
 
 
 async def async_setup_entry(hass, entry):

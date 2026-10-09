@@ -1,4 +1,4 @@
-"""Constants for the read-only decoder integration."""
+"""Constants for the decoder integration."""
 
 from datetime import timedelta
 

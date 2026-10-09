@@ -35,10 +35,115 @@ Bereitgestellt werden Temperaturen in °C, Pumpenwerte in %, Relaiszustände,
 API-/Busstatus und im `km_remote`-Modus die gelieferten Vitotrol-Werte.
 Kanalnamen sind generisch nummeriert, da die API keine anlagenspezifischen
 Sensorbezeichnungen liefert; die Namen können in Home Assistant angepasst werden.
-Die Integration fragt regelmäßig gemeinsam für alle Entitäten ab und stellt
+Die Integration fragt alle zehn Sekunden gemeinsam für alle Entitäten ab und stellt
 Messwerte bei fehlender Busbereitschaft bzw. API-Ausfall auf „nicht verfügbar“.
-Sie ist ausschließlich lesend; Vitotrol-Steuerung bleibt in der Weboberfläche.
+Bei älteren Decoder-Versionen bleibt die Integration lesend. Schreibbare Entitäten
+werden nur mit den erweiterten `/data`-Feldern, Protokoll `km_remote`, aktiver
+serieller Verbindung, kompatiblem Gerät, Busbereitschaft und Remote-Online verfügbar.
 Durch Entfernen der Integration werden Abfragen beendet; der Decoder läuft weiter.
+
+### Mehrere serielle Adapter gleichzeitig
+
+In der Decoder-Weboberfläche unter **Einstellungen (`/settings`) → +** einen
+weiteren Adapter anlegen und dessen seriellen Gerätepfad und Protokoll
+konfigurieren. Jeder Adapter arbeitet unabhängig und kann gleichzeitig mit den
+anderen betrieben werden. Der primäre Adapter behält die stabile ID `primary`;
+die bisherige Basis-URL ohne Adapterpfad bleibt für ihn unverändert gültig.
+
+**Docker:** Das Pluszeichen kann keine Host-Geräte automatisch in den Container
+durchreichen. Jeden benötigten seriellen Adapter vorher manuell über die
+Docker-Gerätezuordnung (z. B. `devices` in Compose bzw. `--device`) zugänglich machen
+und den im Container sichtbaren Pfad in der Weboberfläche auswählen. Ein Gerät
+darf nicht gleichzeitig von mehreren Adapterinstanzen oder einem zweiten
+Decoder/Add-on geöffnet werden.
+
+In Home Assistant **für jeden Adapter einen eigenen Integrationseintrag**
+anlegen. Die in der Weboberfläche angegebene **API-Basis-URL** verwenden, ohne
+`/data` anzuhängen, zum Beispiel:
+
+| Adapter | Basis-URL für den HA-Eintrag |
+| --- | --- |
+| Primär | `http://192.168.1.50:8099/adapters/primary` |
+| Weiterer Adapter | `http://192.168.1.50:8099/adapters/adapter_1` |
+
+Die tatsächliche ID aus der Weboberfläche übernehmen; `adapter_1` ist ein
+Beispiel. `GET /api/adapters` liefert die Liste mit `id`, `name` und `api_url`.
+Ein dort angegebener relativer Pfad wie `/adapters/adapter_1` wird an die
+erreichbare Decoder-Adresse angehängt. Einen vorhandenen primären HA-Eintrag mit
+der bisherigen URL **beibehalten**, nicht zusätzlich unter `/adapters/primary`
+einrichten: Beide URLs adressieren denselben primären Adapter.
+
+Der Basis-Pfad bleibt bei allen Abfragen und Änderungen erhalten:
+`/adapters/<id>/data` und `/adapters/<id>/api/remote`. Jeder HA-Eintrag besitzt
+eigene Entitäts-IDs, Zustände, Verfügbarkeit und Steuerbefehle; ein Ausfall oder
+eine Einstellung eines Adapters verändert keine Entitäten eines anderen.
+Es erfolgt keine automatische Mehrfachadapter-Erkennung innerhalb eines Eintrags.
+Die Geräte-/Entitätsnamen können in HA zur besseren Unterscheidung angepasst werden.
+
+### Aktualisierung und Vitotrol-Entitäten
+
+Zum Aktualisieren zuerst den Decoder/das Add-on aktualisieren, dann den **gesamten**
+Ordner `custom_components/viessmann_decoder` im HA-Konfigurationsverzeichnis ersetzen
+und Home Assistant neu starten. Die vorhandene Integration nicht löschen: Die
+eindeutigen IDs bestehender Sensoren bleiben erhalten. Neue Entitäten werden auch
+bei später empfangenen API-Feldern automatisch ergänzt.
+
+Im Remote-Modus stehen folgende Einstellungen bereit:
+
+| Entität | Bereich / Bedeutung |
+| --- | --- |
+| Lokal vorgegebene Raumtemperatur | −20 bis 50 °C, Schritt 0,1 °C; **kein gemessener Istwert**, kann z. B. von einer Automation mit einem echten Raumsensor gespeist werden |
+| Angeforderte normale / reduzierte Raumtemperatur | 5 bis 35 °C, ganzzahlig |
+| Partytemperatur – aktiviert Partybetrieb | 5 bis 35 °C, ganzzahlig, nur Profil `wifi`; jede Änderung aktiviert zugleich Partybetrieb |
+| Angeforderter Grundbetrieb | `off` (Abschalten), `water` (Warmwasser), `heat_water` (Heizen + Warmwasser) |
+| Angeforderter Party- / Sparbetrieb | Schalter für `party_on/off` bzw. `economy_on/off` |
+
+Die Zahlen, Betriebsart und Schalter zeigen **lokal angeforderte Einstellungen**,
+nicht vom Heizungsregler bestätigte Zustände. Änderungen gehen als validiertes
+JSON an `POST /api/remote`. „queued“ bedeutet nur in die lokale Warteschlange
+aufgenommen, **nicht am Regler ausgeführt oder bestätigt**. Die Integration ändert
+keinen Zustand optimistisch, sondern fragt nach Annahme erneut `/data` ab.
+HTTP-, Verbindungs-, Validierungs- und Warteschlangenfehler werden in HA gemeldet.
+
+Diagnosesensoren zeigen `pending_commands`, `crc_errors`, `malformed_frames`,
+`unknown_commands` sowie das Alter des empfangenen Statusdatensatzes. Das diagnostische
+Kommunikationsproblem wird bei fehlender Verbindung/Busbereitschaft/Onlinezustand
+oder nicht-null Fehlerzählern aktiv; historische Zähler können es aktiv halten.
+Es ist **keine Heizungsstörung** und enthält keine erfundenen Fehlercodes.
+
+Der Binärsensor **Sammelstörung** (`controller_fault`, englisch „Collective fault“)
+wird im `km_remote`-Modus immer angelegt, auch wenn ältere APIs das Feld noch nicht
+liefern. Seine eindeutige ID (`<Eintrags-ID>_remote_controller_fault`) bleibt
+unverändert. Er zeigt eine Heizungsstörung ohne Auslesen einzelner Fehlercodes:
+**Ein** bedeutet Störung, **Aus** bedeutet keine Störung – ausschließlich bei
+verifiziertem booleschem Wert (`measurements_verified: true`), einem höchstens
+180000 ms alten Statusdatensatz und aktiver, kompatibler, busbereiter
+Onlineverbindung. Bei fehlendem Feld, `null`, unbestätigter Zuordnung, fehlender
+Altersangabe, veralteten Daten oder Verbindungsausfall bleibt er **nicht verfügbar**,
+nicht „Aus“. Die Attribute `source_field: controller_fault` und
+`mapping_status: unverified` erklären die noch offene Zuordnung; erst ein
+verifizierter boolescher Wert setzt `mapping_status: verified`. Dieses Attribut
+ersetzt nicht die Prüfung der Aktualität und Verfügbarkeit.
+Empfangene Außentemperatur und Heizfreigabe
+werden nur bei `measurements_verified: true`, einem nicht-null Wert und einem
+Statusdatensatzalter von höchstens 180000 ms verfügbar. Fehlt die Altersangabe,
+bleiben sie ebenfalls nicht verfügbar. Aktuell ist die Zuordnung nicht bewiesen:
+Die gemeldeten **25 °C statt tatsächlich 9 °C** werden weder als gültige Außentemperatur
+ausgegeben noch durch eine erfundene Korrektur ersetzt. Lokal vorgegebene
+Raum-/Solltemperaturen sind davon ausdrücklich getrennt.
+Die JSON-Felder `outside_temperature_candidate` und `heating_enabled_candidate`
+sind ausschließlich unbestätigte Diagnosekandidaten; die Integration legt dafür
+keine Messwert-Entitäten an. `/data` und `/api/remote` liefern derzeit
+`outside_temperature`, `heating_enabled` und `controller_fault` als `null` sowie
+`measurements_verified: false`. Ohne vollständig verifizierte Zuordnung bleiben
+die zugehörigen realen Messwerte und Heizungsstörungen nicht verfügbar.
+
+Für die spätere verifizierte Zuordnung können reale Mitschnitte bei einer
+Wartung bereitgestellt werden: Zeitstempel (mit Zeitzone), Adapter-ID, Slot und
+Profil sowie die zugehörige Anzeige am Heizungsregler dokumentieren und rohe
+Buslogs vor, während und nach dem beobachteten Störungszustand beilegen.
+Bis diese Zuordnung belegt ist, wird kein Störungsbit angenommen; ein
+Kommunikationsproblem wird niemals als Sammelstörung gewertet.
 
 Die folgenden REST-/Template-Beispiele sind eine manuelle Alternative. Nicht
 zusätzlich für dieselben Messwerte einrichten, wenn die Custom Integration bereits

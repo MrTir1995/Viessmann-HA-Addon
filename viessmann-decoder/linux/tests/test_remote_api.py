@@ -7,6 +7,7 @@ import pty
 import select
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -28,6 +29,8 @@ def telegram(command, data=b"", destination=0x11, slot=1):
 @unittest.skipUnless(os.environ.get("VIESSMANN_WEBSERVER"), "Set VIESSMANN_WEBSERVER")
 class RemoteApiTests(unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix=".remote-api-", dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
         self.master, self.slave = pty.openpty()
         os.set_blocking(self.master, False)
         with socket.socket() as reservation:
@@ -41,6 +44,7 @@ class RemoteApiTests(unittest.TestCase):
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env={**os.environ, "VIESSMANN_DATA_DIR": directory.name},
         )
         self.addCleanup(self.stop)
         deadline = time.monotonic() + 5
@@ -126,6 +130,15 @@ class RemoteApiTests(unittest.TestCase):
         self.assertEqual(state["mode"], 0xC9)
         self.assertTrue(state["requested_party_mode"])
         self.assertEqual(state["party_room_temperature"], 22)
+        status, body = self.request("/data")
+        self.assertEqual(status, 200)
+        remote = json.loads(body)["remote"]
+        for key in ("room_temperature", "desired_room_temperature", "reduced_room_temperature",
+                    "party_room_temperature", "mode", "profile", "pending_commands",
+                    "requested_party_mode", "requested_economy_mode", "crc_errors",
+                    "malformed_frames", "unknown_commands"):
+            self.assertEqual(remote[key], state[key])
+        self.assertNotIn("datasets", remote)
         self.assertEqual(self.post({"mode": "economy_on"})[0], 200)
         self.assertTrue(self.state()["requested_economy_mode"])
 
@@ -161,13 +174,33 @@ class RemoteApiTests(unittest.TestCase):
         packet = telegram(0xBF, bytes([0x1D]) + bytes(value ^ 0xAA for value in values))
         self.exchange(packet, expect_reply=False)
         state = self.state()
-        self.assertEqual(state["outside_temperature"], -5)
-        self.assertTrue(state["heating_enabled"])
+        self.assertIsNone(state["outside_temperature"])
+        self.assertIsNone(state["heating_enabled"])
+        self.assertIsNone(state["controller_fault"])
+        self.assertFalse(state["measurements_verified"])
+        self.assertEqual(state["outside_temperature_candidate"], -5)
+        self.assertTrue(state["heating_enabled_candidate"])
+        self.assertGreaterEqual(state["status_dataset_age_ms"], 0)
         self.assertEqual(state["datasets"][0]["data"], list(values))
         self.assertGreaterEqual(state["datasets"][0]["age_ms"], 0)
         # Broadcast data must not produce simultaneous slave acknowledgements.
         self.exchange(telegram(0xBF, bytes([0x19, 0xAA, 0xAA]), destination=0xFF, slot=0),
                       expect_reply=False)
+
+    def test_captured_temperature_is_not_a_verified_measurement(self):
+        # Real capture decoded by the previous interpretation as 25 C; the
+        # operator reports ~9 C. Do not invent an offset or relabel another byte.
+        packet = bytes.fromhex("11 00 BF 15 01 01 1D 2C AA 88 F5 82 A0 B3 A8 AA AA 2C AA 4D 1D")
+        self.exchange(packet)
+        state = self.state()
+        self.assertEqual(state["outside_temperature_candidate"], 25)
+        self.assertIsNone(state["outside_temperature"])
+        self.assertFalse(state["measurements_verified"])
+        remote = json.loads(self.request("/data")[1])["remote"]
+        self.assertIsNone(remote["outside_temperature"])
+        self.assertIsNone(remote["controller_fault"])
+        self.assertFalse(remote["measurements_verified"])
+        self.assertIn(b"Experimenteller Temperaturkandidat", self.request("/remote")[1])
 
     def test_party_payload_uses_effective_profile(self):
         self.exchange(telegram(0))

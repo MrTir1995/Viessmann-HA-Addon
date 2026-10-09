@@ -13,7 +13,7 @@
 
 Das Add-on unterstützt VBUS, KW-Bus, P300/Optolink und KM-Bus. Ab Version **2.3.0** steht zusätzlich eine **experimentelle Vitotrol-200/300-Emulation** als KM-Bus-Slave zur Verfügung. Funktionsumfang und Kompatibilität hängen von der Regelung und dem verwendeten Busadapter ab.
 
-> **Wichtig:** Das Add-on selbst erstellt keine Entitäten. Die mitgelieferte [Custom Integration](viessmann-decoder/INTEGRATION.md#custom-integration-empfohlen) legt Sensoren über die REST-API automatisch an. Die Vitotrol-Emulation ist kein verifizierter Ersatz für eine physische Fernbedienung.
+> **Wichtig:** Das Add-on selbst erstellt keine Entitäten. Die mitgelieferte [Custom Integration](viessmann-decoder/INTEGRATION.md#custom-integration-empfohlen) legt Sensoren und Diagnoseentitäten über die REST-API automatisch an; im Vitotrol-Modus kommen Zahlenwerte, Betriebsartauswahl sowie Party-/Sparbetrieb-Schalter hinzu. Steuerwerte sind lokale Vorgaben, keine Bestätigung der Regelung. Unverifizierte Außentemperaturen und Anlagenstörungen bleiben nicht verfügbar. Die Vitotrol-Emulation ist kein verifizierter Ersatz für eine physische Fernbedienung.
 
 ## Dockerbetrieb ohne Home Assistant Supervisor
 
@@ -41,6 +41,7 @@ Für detaillierte Installationsanweisungen siehe [INSTALL.md](viessmann-decoder/
 - 🖥️ **Web-Interface**: Sauberes, responsives Dashboard zugänglich aus Home Assistant
 - 🔍 **Automatische Erkennung**: Erkennt automatisch Geräte auf dem Bus
 - ⚙️ **Einfache Konfiguration**: Intuitive Einrichtung über Home Assistant UI
+- 🔌 **Mehrere Adapter**: Unter `/settings` über **+** hinzufügen, unabhängig konfigurieren und gleichzeitig betreiben; je Adapter eine eigene API-Basis für Home Assistant
 - 🪶 **Leichtgewichtig**: Auf Alpine Linux basierend für minimalen Ressourcenverbrauch
 - 🏠 **Home Assistant Integration**: Ingress-Weboberfläche, REST-API und Custom Integration mit automatischen Sensoren
 - 🎛️ **Experimentelle Fernbedienung**: Raumtemperatur, Solltemperatur und grundlegende Betriebsarten im Modus `km_remote`

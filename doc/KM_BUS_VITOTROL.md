@@ -137,10 +137,17 @@ Vitotrol replacement; verify the selected form on the target controller.
 `pending_commands`, `crc_errors`, `malformed_frames`, `unknown_commands`,
 `outside_temperature`, `heating_enabled`, and `datasets`. Each received dataset
 has `id`, XOR-decoded `data` bytes and `age_ms`. Missing interpreted measurements
-are `null`, not a fabricated zero. Outside temperature and the heating-enable
-flag use the WiFiVitotrol interpretation of the circuit status dataset; other
-fields remain raw because their layout is insufficiently established. These
-received measurements must be distinguished from local requested controls.
+are `null`, not a fabricated zero. The WiFiVitotrol interpretation of the circuit
+status dataset has not been verified on the target controller: a supplied capture
+produces 25 °C while the operator reports approximately 9 °C outside. There is no
+evidence for a fixed offset correction or a replacement byte mapping.
+`measurements_verified` is therefore `false`; `outside_temperature`,
+`heating_enabled` and `controller_fault` remain `null`. The former interpretation
+is retained only in `outside_temperature_candidate` and `heating_enabled_candidate`
+for diagnosis, not as real measurements. Candidates expire after 180 seconds
+without a new status dataset; `status_dataset_age_ms` reports its age or `null`.
+Other fields remain raw because their layout is insufficiently established.
+Received measurements must be distinguished from local requested controls.
 Received raw datasets `0x14`–`0x17` never confirm or replace requested operating,
 party or economy modes: their provenance is not established.
 
@@ -153,6 +160,20 @@ to send arbitrary commands or a claim that their contents are understood.
 The German `/remote` UI exposes all these controls and received datasets, updates
 every two seconds and preserves unsent form edits. It is linked from the
 dashboard in `km_remote` mode and uses relative paths for Home Assistant Ingress.
+
+The `remote` object in `GET /data` now exposes the same controls, diagnostics and
+measurement-quality fields as `GET /api/remote`, without the raw `datasets` list.
+The custom Home Assistant integration uses this single polling endpoint and
+`POST /api/remote` for number, select and switch entities. Successful writes
+only confirm queue acceptance, not that the controller adopted the value.
+See the add-on's `INTEGRATION.md` for installation and entity semantics.
+
+**Für Home Assistant:** Raumtemperatur und Sollwerte sind lokale Vorgaben des
+Emulators, keine bestätigten Messwerte der Anlage. Außentemperatur und
+Anlagenstörung bleiben ohne belegte Datensatzzuordnung „nicht verfügbar“;
+Kommunikationsdiagnosen sind keine Heizungsstörungen. Zur weiteren Zuordnung
+werden zeitgleiche Rohdatensätze und die an der Regelung angezeigten Temperaturen
+bzw. tatsächlichen Störungscodes benötigt.
 
 Container restart is available from the dashboard and settings page, subject
 to an external restart manager: Docker restart policy or enabled Home Assistant

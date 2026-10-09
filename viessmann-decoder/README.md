@@ -103,6 +103,9 @@ Für verschlüsselten Zugriff einen HTTPS-Reverse-Proxy verwenden.
 
 **Home Assistant:** Die mitgelieferte Custom Integration unter
 `custom_components/viessmann_decoder` erstellt Entitäten automatisch.
+Im Vitotrol-Modus stehen auch lokale Temperaturvorgaben, Betriebsartauswahl
+und Party-/Sparbetrieb-Schalter über die API bereit. Unbestätigte Messwert-
+und Störungszuordnungen werden nicht als gesicherte Anlagendaten ausgegeben.
 Installation und Einrichtung: [INTEGRATION.md](INTEGRATION.md#custom-integration-empfohlen).
 
 ## ✨ Features

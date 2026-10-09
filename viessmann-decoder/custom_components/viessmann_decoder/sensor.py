@@ -1,4 +1,4 @@
-"""Temperature, pump speed, status and remote read-only sensors."""
+"""Temperature, pump speed, requested settings and remote diagnostics."""
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
@@ -6,7 +6,8 @@ from homeassistant.core import callback
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN, PROTOCOL_NAMES
-from .entity import DecoderEntity, async_register_discovery
+from .data import REMOTE_COUNTERS
+from .entity import DecoderEntity, async_register_discovery, received_status_available
 
 REMOTE_KEYS = (
     "room_temperature",
@@ -15,6 +16,10 @@ REMOTE_KEYS = (
     "slot",
     "model",
     "last_master_dataset",
+)
+REMOTE_EXTENSIONS = (
+    "reduced_room_temperature", "party_room_temperature", "outside_temperature",
+    "status_dataset_age_ms", *REMOTE_COUNTERS,
 )
 
 
@@ -36,7 +41,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     discovered.add(key)
                     entities.append(DecoderChannelSensor(coordinator, group, index))
         if data["protocol"] == 4:
-            for key in REMOTE_KEYS:
+            for key in REMOTE_KEYS + REMOTE_EXTENSIONS:
+                if key not in data["remote"]:
+                    continue
                 identity = f"remote_{key}"
                 if identity not in discovered:
                     discovered.add(identity)
@@ -90,16 +97,26 @@ class DecoderChannelSensor(DecoderEntity, SensorEntity):
 
 class DecoderRemoteSensor(DecoderEntity, SensorEntity):
     def __init__(self, coordinator, key):
-        reading = key in ("room_temperature", "desired_room_temperature", "mode", "last_master_dataset")
+        reading = key not in (*REMOTE_COUNTERS, "model", "slot", "status_dataset_age_ms")
         super().__init__(coordinator, f"remote_{key}", bus_reading=reading, remote=True)
         self._key = key
         self._attr_translation_key = f"remote_{key}"
         if key.endswith("temperature"):
             self._attr_device_class = SensorDeviceClass.TEMPERATURE
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-        elif key in ("model", "slot", "last_master_dataset"):
+            if key == "outside_temperature":
+                self._attr_state_class = SensorStateClass.MEASUREMENT
+        elif key in ("model", "slot", "last_master_dataset", "status_dataset_age_ms", *REMOTE_COUNTERS):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def available(self):
+        if not super().available:
+            return False
+        remote = self.coordinator.data["remote"]
+        if self._key == "outside_temperature":
+            return received_status_available(remote, self._key)
+        return self._key in remote and remote[self._key] is not None
 
     @property
     def native_value(self):

@@ -35,10 +35,58 @@ Bereitgestellt werden Temperaturen in °C, Pumpenwerte in %, Relaiszustände,
 API-/Busstatus und im `km_remote`-Modus die gelieferten Vitotrol-Werte.
 Kanalnamen sind generisch nummeriert, da die API keine anlagenspezifischen
 Sensorbezeichnungen liefert; die Namen können in Home Assistant angepasst werden.
-Die Integration fragt regelmäßig gemeinsam für alle Entitäten ab und stellt
+Die Integration fragt alle zehn Sekunden gemeinsam für alle Entitäten ab und stellt
 Messwerte bei fehlender Busbereitschaft bzw. API-Ausfall auf „nicht verfügbar“.
-Sie ist ausschließlich lesend; Vitotrol-Steuerung bleibt in der Weboberfläche.
+Bei älteren Decoder-Versionen bleibt die Integration lesend. Schreibbare Entitäten
+werden nur mit den erweiterten `/data`-Feldern, Protokoll `km_remote`, aktiver
+serieller Verbindung, kompatiblem Gerät, Busbereitschaft und Remote-Online verfügbar.
 Durch Entfernen der Integration werden Abfragen beendet; der Decoder läuft weiter.
+
+### Aktualisierung und Vitotrol-Entitäten
+
+Zum Aktualisieren zuerst den Decoder/das Add-on aktualisieren, dann den **gesamten**
+Ordner `custom_components/viessmann_decoder` im HA-Konfigurationsverzeichnis ersetzen
+und Home Assistant neu starten. Die vorhandene Integration nicht löschen: Die
+eindeutigen IDs bestehender Sensoren bleiben erhalten. Neue Entitäten werden auch
+bei später empfangenen API-Feldern automatisch ergänzt.
+
+Im Remote-Modus stehen folgende Einstellungen bereit:
+
+| Entität | Bereich / Bedeutung |
+| --- | --- |
+| Lokal vorgegebene Raumtemperatur | −20 bis 50 °C, Schritt 0,1 °C; **kein gemessener Istwert**, kann z. B. von einer Automation mit einem echten Raumsensor gespeist werden |
+| Angeforderte normale / reduzierte Raumtemperatur | 5 bis 35 °C, ganzzahlig |
+| Partytemperatur – aktiviert Partybetrieb | 5 bis 35 °C, ganzzahlig, nur Profil `wifi`; jede Änderung aktiviert zugleich Partybetrieb |
+| Angeforderter Grundbetrieb | `off` (Abschalten), `water` (Warmwasser), `heat_water` (Heizen + Warmwasser) |
+| Angeforderter Party- / Sparbetrieb | Schalter für `party_on/off` bzw. `economy_on/off` |
+
+Die Zahlen, Betriebsart und Schalter zeigen **lokal angeforderte Einstellungen**,
+nicht vom Heizungsregler bestätigte Zustände. Änderungen gehen als validiertes
+JSON an `POST /api/remote`. „queued“ bedeutet nur in die lokale Warteschlange
+aufgenommen, **nicht am Regler ausgeführt oder bestätigt**. Die Integration ändert
+keinen Zustand optimistisch, sondern fragt nach Annahme erneut `/data` ab.
+HTTP-, Verbindungs-, Validierungs- und Warteschlangenfehler werden in HA gemeldet.
+
+Diagnosesensoren zeigen `pending_commands`, `crc_errors`, `malformed_frames`,
+`unknown_commands` sowie das Alter des empfangenen Statusdatensatzes. Das diagnostische
+Kommunikationsproblem wird bei fehlender Verbindung/Busbereitschaft/Onlinezustand
+oder nicht-null Fehlerzählern aktiv; historische Zähler können es aktiv halten.
+Es ist **keine Heizungsstörung** und enthält keine erfundenen Fehlercodes.
+
+Die reale Heizungsstörung (`controller_fault`) bleibt bei `null` nicht verfügbar,
+bis eine verifizierte Zuordnung vorliegt. Empfangene Außentemperatur und Heizfreigabe
+werden nur bei `measurements_verified: true`, einem nicht-null Wert und einem
+Statusdatensatzalter von höchstens 180000 ms verfügbar. Fehlt die Altersangabe,
+bleiben sie ebenfalls nicht verfügbar. Aktuell ist die Zuordnung nicht bewiesen:
+Die gemeldeten **25 °C statt tatsächlich 9 °C** werden weder als gültige Außentemperatur
+ausgegeben noch durch eine erfundene Korrektur ersetzt. Lokal vorgegebene
+Raum-/Solltemperaturen sind davon ausdrücklich getrennt.
+Die JSON-Felder `outside_temperature_candidate` und `heating_enabled_candidate`
+sind ausschließlich unbestätigte Diagnosekandidaten; die Integration legt dafür
+keine Messwert-Entitäten an. `/data` und `/api/remote` liefern derzeit
+`outside_temperature`, `heating_enabled` und `controller_fault` als `null` sowie
+`measurements_verified: false`. Ohne vollständig verifizierte Zuordnung bleiben
+die zugehörigen realen Messwerte und Heizungsstörungen nicht verfügbar.
 
 Die folgenden REST-/Template-Beispiele sind eine manuelle Alternative. Nicht
 zusätzlich für dieselben Messwerte einrichten, wenn die Custom Integration bereits

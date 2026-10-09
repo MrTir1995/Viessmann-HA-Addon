@@ -1,10 +1,23 @@
 """Common identity, availability and dynamic discovery."""
 
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .api import CannotConnect
+from .data import CONTROL_FIELDS, InvalidDecoderData
+
+
+def received_status_available(remote, key):
+    """Never expose unverified, absent or stale received controller readings."""
+    age = remote.get("status_dataset_age_ms")
+    return (
+        remote.get("measurements_verified") is True
+        and remote.get(key) is not None
+        and age is not None and age <= 180000
+    )
 
 
 @callback
@@ -53,3 +66,33 @@ class DecoderEntity(CoordinatorEntity):
         if self._remote and self._bus_reading and not data["remote"]["online"]:
             return False
         return True
+
+
+class DecoderControl(DecoderEntity):
+    """Local requested controls, never optimistically confirmed controller state."""
+
+    def __init__(self, coordinator, key, field, *, wifi_only=False):
+        super().__init__(coordinator, key, bus_reading=True, remote=True)
+        self._field = field
+        self._wifi_only = wifi_only
+        self._attr_translation_key = key
+
+    @property
+    def available(self):
+        if not super().available:
+            return False
+        remote = self.coordinator.data["remote"]
+        return (
+            CONTROL_FIELDS <= remote.keys()
+            and self._field in remote
+            and (not self._wifi_only or remote["profile"] == "wifi")
+        )
+
+    async def async_send_command(self, command):
+        if not self.available:
+            raise HomeAssistantError("Remote control is unavailable or unsupported")
+        try:
+            await self.coordinator.api.async_set_remote(command)
+        except (CannotConnect, InvalidDecoderData) as err:
+            raise HomeAssistantError(str(err)) from err
+        await self.coordinator.async_request_refresh()

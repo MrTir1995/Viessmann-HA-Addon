@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to Viessmann Decoder",
-        "description": "Enter the decoder's base URL, for example http://192.168.1.50:8099 (without /data). The integration only reads data; it never changes decoder settings.",
+        "description": "Enter the decoder's base URL, for example http://192.168.1.50:8099 (without /data). Supported remote controls submit local requested settings, not confirmed controller states.",
         "data": {"url": "Decoder URL"}
       }
     },
@@ -22,19 +22,43 @@
       "status": {"name": "Status"},
       "protocol": {"name": "Protocol"},
       "serial_port": {"name": "Serial port"},
-      "remote_room_temperature": {"name": "Room temperature"},
-      "remote_desired_room_temperature": {"name": "Desired room temperature"},
-      "remote_mode": {"name": "Remote operating mode"},
+      "remote_room_temperature": {"name": "Locally supplied room temperature (not measured)"},
+      "remote_desired_room_temperature": {"name": "Locally requested normal room temperature"},
+      "remote_mode": {"name": "Locally requested remote operating mode"},
       "remote_slot": {"name": "Remote slot"},
       "remote_model": {"name": "Remote model"},
-      "remote_last_master_dataset": {"name": "Last master dataset"}
+      "remote_last_master_dataset": {"name": "Last master dataset"},
+      "remote_reduced_room_temperature": {"name": "Locally requested reduced room temperature"},
+      "remote_party_room_temperature": {"name": "Locally requested party room temperature"},
+      "remote_outside_temperature": {"name": "Verified received outside temperature"},
+      "remote_pending_commands": {"name": "Pending commands"},
+      "remote_crc_errors": {"name": "CRC errors"},
+      "remote_malformed_frames": {"name": "Malformed frames"},
+      "remote_unknown_commands": {"name": "Unknown commands"},
+      "remote_status_dataset_age_ms": {"name": "Received status age (ms)"}
     },
     "binary_sensor": {
       "relay": {"name": "Relay {channel}"},
       "serial_connection": {"name": "Serial connection"},
       "data_ready": {"name": "Data ready"},
       "compatibility": {"name": "Device compatible"},
-      "remote_online": {"name": "Remote online"}
+      "remote_online": {"name": "Remote online"},
+      "remote_controller_fault": {"name": "Verified controller fault"},
+      "remote_heating_enabled": {"name": "Verified received heating enabled"},
+      "remote_communication_problem": {"name": "Communication problem (not heating fault)"}
+    },
+    "number": {
+      "remote_room_temperature_setting": {"name": "Supply local room temperature (not measured)"},
+      "remote_desired_room_temperature_setting": {"name": "Request normal room temperature"},
+      "remote_reduced_room_temperature_setting": {"name": "Request reduced room temperature"},
+      "remote_party_room_temperature_setting": {"name": "Party temperature – activates party mode"}
+    },
+    "select": {
+      "remote_base_mode_setting": {"name": "Locally requested base operating mode", "state": {"off": "Off", "water": "Hot water", "heat_water": "Heating and hot water"}}
+    },
+    "switch": {
+      "remote_party_setting": {"name": "Locally requested party mode"},
+      "remote_economy_setting": {"name": "Locally requested economy mode"}
     }
   }
 }

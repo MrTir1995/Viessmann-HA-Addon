@@ -286,6 +286,74 @@ bool attemptConnection(const std::string& port) {
     return false;
 }
 
+// Caller holds data_mutex; keep /data and /api/remote on the same contract.
+std::string generateRemoteJSON(bool includeDatasets) {
+    const bool connected = serialConnected && vitotrol;
+    char json[1024];
+    snprintf(json, sizeof(json),
+             "{\"model\":\"Vitotrol %s\",\"slot\":%u,\"online\":%s,"
+             "\"room_temperature\":%.1f,\"desired_room_temperature\":%.1f,"
+             "\"reduced_room_temperature\":%.1f,\"party_room_temperature\":%.1f,"
+             "\"mode\":%u,\"last_master_dataset\":%u,\"profile\":\"%s\","
+             "\"requested_party_mode\":%s,\"requested_economy_mode\":%s,"
+             "\"pending_commands\":%u,\"crc_errors\":%u,"
+             "\"malformed_frames\":%u,\"unknown_commands\":%u,"
+             "\"measurements_verified\":false,\"outside_temperature\":null,"
+             "\"heating_enabled\":null,\"controller_fault\":null",
+             config.remoteModelId == 0x38 ? "300" : "200", config.remoteSlot,
+             connected && vitotrol->isOnline() ? "true" : "false",
+             connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
+             connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
+             connected ? vitotrol->getReducedRoomTemperature() : 0.0,
+             connected ? vitotrol->getPartyRoomTemperature() : 0.0,
+             connected ? vitotrol->getOperatingMode() : 0,
+             connected ? vitotrol->getLastMasterDataset() : 0,
+             connected ? vitotrol->getProtocolProfile() : "wifi",
+             connected && vitotrol->getPartyEnabled() ? "true" : "false",
+             connected && vitotrol->getEconomyEnabled() ? "true" : "false",
+             connected ? vitotrol->getPendingCommandCount() : 0,
+             connected ? vitotrol->getCrcErrorCount() : 0,
+             connected ? vitotrol->getMalformedFrameCount() : 0,
+             connected ? vitotrol->getUnknownCommandCount() : 0);
+    std::string body(json);
+    const uint8_t* bytes = nullptr;
+    uint8_t length = 0;
+    uint32_t receivedAt = 0;
+    const uint8_t statusId = connected && strcmp(vitotrol->getProtocolProfile(), "openv") == 0
+        ? 0x1C + config.remoteSlot : 0x1D;
+    const bool hasStatus = connected && vitotrol->getDataset(statusId, bytes, length, receivedAt);
+    body += ",\"status_dataset_age_ms\":";
+    body += hasStatus ? std::to_string(static_cast<uint32_t>(millis()) - receivedAt) : "null";
+    // The published interpretation gives 25 C on a controller reporting ~9 C.
+    // Retain candidates for diagnosis, never present them as verified measurements.
+    float outside = 0;
+    bool heating = false;
+    const bool fresh = hasStatus && static_cast<uint32_t>(millis() - receivedAt) < 180000;
+    body += ",\"outside_temperature_candidate\":";
+    body += fresh && vitotrol->getOutsideTemperature(outside) ? std::to_string(outside) : "null";
+    body += ",\"heating_enabled_candidate\":";
+    body += fresh && vitotrol->getHeatingEnabled(heating) ? (heating ? "true" : "false") : "null";
+    if (includeDatasets) {
+        body += ",\"datasets\":[";
+        bool first = true;
+        for (uint16_t id = 0; connected && id < 254; ++id) {
+            if (!vitotrol->getDataset(static_cast<uint8_t>(id), bytes, length, receivedAt)) continue;
+            if (!first) body += ',';
+            first = false;
+            body += "{\"id\":" + std::to_string(id) + ",\"age_ms\":" +
+                    std::to_string(static_cast<uint32_t>(millis()) - receivedAt) + ",\"data\":[";
+            for (uint8_t i = 0; i < length; ++i) {
+                if (i) body += ',';
+                body += std::to_string(bytes[i]);
+            }
+            body += "]}";
+        }
+        body += ']';
+    }
+    body += '}';
+    return body;
+}
+
 // Generate JSON data response
 char* generateDataJSON() {
     static char json[4096];
@@ -331,19 +399,9 @@ char* generateDataJSON() {
     JSON_APPEND("\"protocol\":%d,", config.protocol);
 
     if (config.protocol == PROTOCOL_KM_REMOTE) {
-        const bool connected = serialConnected && vitotrol;
         JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[],");
-        JSON_APPEND("\"remote\":{\"model\":\"Vitotrol %s\",\"slot\":%u,"
-                    "\"online\":%s,\"room_temperature\":%.1f,"
-                    "\"desired_room_temperature\":%.1f,\"mode\":%u,"
-                    "\"last_master_dataset\":%u}",
-                    config.remoteModelId == 0x38 ? "300" : "200",
-                    config.remoteSlot,
-                    connected && vitotrol->isOnline() ? "true" : "false",
-                    connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
-                    connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
-                    connected ? vitotrol->getOperatingMode() : 0,
-                    connected ? vitotrol->getLastMasterDataset() : 0);
+        const std::string remote = generateRemoteJSON(false);
+        JSON_APPEND("\"remote\":%s", remote.c_str());
         pthread_mutex_unlock(&data_mutex);
         JSON_APPEND("}");
         return json;
@@ -837,62 +895,8 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
                            size_t* uploadDataSize, const char* uploadData,
                            void** connectionContext) {
     if (strcmp(method, "GET") == 0) {
-        char json[1024];
         pthread_mutex_lock(&data_mutex);
-        const bool connected = serialConnected && vitotrol;
-        snprintf(json, sizeof(json),
-                 "{\"model\":\"Vitotrol %s\",\"slot\":%u,\"online\":%s,"
-                 "\"room_temperature\":%.1f,\"desired_room_temperature\":%.1f,"
-                 "\"reduced_room_temperature\":%.1f,"
-                 "\"mode\":%u,\"last_master_dataset\":%u,"
-                 "\"profile\":\"%s\",\"pending_commands\":%u,"
-                 "\"crc_errors\":%u,\"malformed_frames\":%u,\"unknown_commands\":%u",
-                 config.remoteModelId == 0x38 ? "300" : "200",
-                 config.remoteSlot,
-                 connected && vitotrol->isOnline() ? "true" : "false",
-                 connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
-                 connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
-                 connected ? vitotrol->getReducedRoomTemperature() : 0.0,
-                 connected ? vitotrol->getOperatingMode() : 0,
-                 connected ? vitotrol->getLastMasterDataset() : 0,
-                 connected ? vitotrol->getProtocolProfile() : "wifi",
-                 connected ? vitotrol->getPendingCommandCount() : 0,
-                 connected ? vitotrol->getCrcErrorCount() : 0,
-                 connected ? vitotrol->getMalformedFrameCount() : 0,
-                 connected ? vitotrol->getUnknownCommandCount() : 0);
-        std::string body(json);
-        float outsideTemperature = 0;
-        bool heatingEnabled = false;
-        const bool hasOutside = connected && vitotrol->getOutsideTemperature(outsideTemperature);
-        const bool hasHeating = connected && vitotrol->getHeatingEnabled(heatingEnabled);
-        body += ",\"outside_temperature\":";
-        body += hasOutside ? std::to_string(outsideTemperature) : "null";
-        body += ",\"heating_enabled\":";
-        body += hasHeating ? (heatingEnabled ? "true" : "false") : "null";
-        body += ",\"requested_party_mode\":";
-        body += connected && vitotrol->getPartyEnabled() ? "true" : "false";
-        body += ",\"party_room_temperature\":" +
-                std::to_string(connected ? vitotrol->getPartyRoomTemperature() : 0.0f);
-        body += ",\"requested_economy_mode\":";
-        body += connected && vitotrol->getEconomyEnabled() ? "true" : "false";
-        body += ",\"datasets\":[";
-        bool first = true;
-        for (uint16_t id = 0; connected && id < 254; ++id) {
-            const uint8_t* bytes = nullptr;
-            uint8_t length = 0;
-            uint32_t receivedAt = 0;
-            if (!vitotrol->getDataset(static_cast<uint8_t>(id), bytes, length, receivedAt)) continue;
-            if (!first) body += ',';
-            first = false;
-            body += "{\"id\":" + std::to_string(id) + ",\"age_ms\":" +
-                   std::to_string(static_cast<uint32_t>(millis()) - receivedAt) + ",\"data\":[";
-            for (uint8_t i = 0; i < length; ++i) {
-                if (i) body += ',';
-                body += std::to_string(bytes[i]);
-            }
-            body += "]}";
-        }
-        body += "]}";
+        const std::string body = generateRemoteJSON(true);
         pthread_mutex_unlock(&data_mutex);
         return queueJson(connection, MHD_HTTP_OK, body.c_str());
     }
@@ -1679,8 +1683,11 @@ async function refresh(){
             ', Party '+(data.requested_party_mode?'an':'aus')+', Sparbetrieb '+(data.requested_economy_mode?'an':'aus');
         el('diagnostics').textContent='Wartende Befehle: '+data.pending_commands+' · CRC-Fehler: '+data.crc_errors+
             ' · Ungültige Telegramme: '+data.malformed_frames+' · Unbekannte Befehle: '+data.unknown_commands;
-        el('sensors').textContent='Außentemperatur: '+(data.outside_temperature===null?'nicht verfügbar':data.outside_temperature+' °C')+
-            ' · Heizfreigabe: '+(data.heating_enabled===null?'nicht verfügbar':(data.heating_enabled?'an':'aus'));
+        el('sensors').textContent=data.measurements_verified
+            ? 'Außentemperatur: '+(data.outside_temperature===null?'nicht verfügbar':data.outside_temperature+' °C')+
+              ' · Heizfreigabe: '+(data.heating_enabled===null?'nicht verfügbar':(data.heating_enabled?'an':'aus'))
+            : 'Außentemperatur, Heizfreigabe und Anlagenstörung: Zuordnung nicht verifiziert; keine gesicherten Messwerte. '+
+              'Experimenteller Temperaturkandidat: '+(data.outside_temperature_candidate==null?'nicht verfügbar':data.outside_temperature_candidate+' °C (kein Messwert)');
         el('datasets').textContent=data.datasets.map(dataset=>'0x'+dataset.id.toString(16).toUpperCase()+
             ' · Alter '+Math.floor(dataset.age_ms/1000)+' s · '+dataset.data.map(byte=>byte.toString(16).toUpperCase().padStart(2,'0')).join(' '))
             .join('\n')||'Noch keine Datensätze.';

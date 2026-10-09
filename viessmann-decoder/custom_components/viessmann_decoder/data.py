@@ -10,6 +10,43 @@ class InvalidDecoderData(ValueError):
     """The server did not return a supported decoder response."""
 
 
+TEMPERATURE_LIMITS = {
+    "room_temperature": (-20, 50, 0.1),
+    "desired_room_temperature": (5, 35, 1),
+    "reduced_room_temperature": (5, 35, 1),
+    "party_room_temperature": (5, 35, 1),
+}
+BASE_MODES = {200: "off", 201: "water", 202: "heat_water"}
+COMMAND_MODES = {*BASE_MODES.values(), "party_on", "party_off", "economy_on", "economy_off"}
+REMOTE_COUNTERS = ("pending_commands", "crc_errors", "malformed_frames", "unknown_commands")
+CONTROL_FIELDS = {
+    "profile", "reduced_room_temperature", "party_room_temperature",
+    "requested_party_mode", "requested_economy_mode", "pending_commands",
+}
+
+
+def validate_command(payload):
+    """Allow only documented finite, bounded remote commands."""
+    if not isinstance(payload, dict) or not payload:
+        raise InvalidDecoderData("Expected a non-empty command object")
+    if payload.keys() - (TEMPERATURE_LIMITS.keys() | {"mode"}):
+        raise InvalidDecoderData("Unknown remote command field")
+    for key, value in payload.items():
+        if key == "mode":
+            if not isinstance(value, str) or value not in COMMAND_MODES:
+                raise InvalidDecoderData("Unsupported operating mode")
+            continue
+        minimum, maximum, step = TEMPERATURE_LIMITS[key]
+        _number(value, key)
+        if not minimum <= value <= maximum or not math.isclose(
+            value / step, round(value / step), abs_tol=1e-7, rel_tol=0
+        ):
+            raise InvalidDecoderData(f"Invalid {key} range or step")
+    if "party_room_temperature" in payload and payload.get("mode") != "party_on":
+        raise InvalidDecoderData("Party temperature requires activating party mode")
+    return dict(payload)
+
+
 def normalize_url(value):
     """Return a canonical HTTP base URL, without credentials or URL metadata."""
     if not isinstance(value, str) or not value.strip():
@@ -103,5 +140,33 @@ def validate_data(payload):
             if integer and value < 0:
                 raise InvalidDecoderData(f"{key} must be non-negative")
             validated_remote[key] = value
+        for key in ("reduced_room_temperature", "party_room_temperature", "outside_temperature"):
+            if key in remote:
+                value = remote[key]
+                if value is not None or key != "outside_temperature":
+                    _number(value, key)
+                validated_remote[key] = value
+        for key in REMOTE_COUNTERS + ("status_dataset_age_ms",):
+            if key in remote:
+                value = remote[key]
+                if value is not None or key != "status_dataset_age_ms":
+                    _number(value, key, integer=True)
+                    if value < 0:
+                        raise InvalidDecoderData(f"{key} must be non-negative")
+                validated_remote[key] = value
+        for key in (
+            "requested_party_mode", "requested_economy_mode", "measurements_verified",
+            "heating_enabled", "controller_fault",
+        ):
+            if key in remote:
+                value = remote[key]
+                nullable = key in ("heating_enabled", "controller_fault")
+                if type(value) is not bool and not (nullable and value is None):
+                    raise InvalidDecoderData(f"{key} must be a boolean")
+                validated_remote[key] = value
+        if "profile" in remote:
+            if remote["profile"] not in ("wifi", "openv"):
+                raise InvalidDecoderData("Unsupported remote profile")
+            validated_remote["profile"] = remote["profile"]
         result["remote"] = validated_remote
     return result

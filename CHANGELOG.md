@@ -2,11 +2,25 @@
 
 All notable changes to this repository and its add-ons will be documented in this file.
 
-## [Unreleased]
+## [2.3.0] - 2026-10-09
+
+### Added
+- Experimental `km_remote` slave mode with Vitotrol 200/300 profiles and heating-circuit slots 1–3.
+- Master-driven KM-Bus frame handling with length and CRC-16/Kermit validation, register access, and queued datasets.
+- Remote web interface at `/remote` and GET/POST API at `/api/remote` for room temperature, setpoint, and basic operating modes.
+- Optional GitHub release publication after successful Docker Hub builds for all five architectures.
 
 ### Fixed
-- Fixed critical S6-Overlay v3 permissions issue - added execute permissions to service run script
-- Updated AppArmor profile to include supervisor socket access
+- Initialized KM-Bus remote communication with fixed 1200 baud and 8E1 settings.
+- Validate release versions against add-on metadata before publishing Docker images.
+
+### Changed
+- Synchronized add-on version and image labels to 2.3.0.
+- Revised README with experimental KM-Bus limitations, configuration, REST integration, and Home Assistant update instructions.
+
+### Notes
+- KM-Bus remote emulation is experimental; compatibility with Vitotronic 200 KM1 and Linux response timing must be verified on the target hardware.
+- Includes all changes from 2.2.1, including hardened VBUS parsing, CRC/frame-boundary fixes, synchronized decoder access, and KM-Bus compatibility polling.
 
 ## [2.2.1] - 2026-10-09
 

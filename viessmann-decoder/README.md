@@ -2,7 +2,7 @@
 
 [![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-HA-Addon)
 [![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-HA-Addon?logo=github)](https://github.com/MrTir1995/Viessmann-HA-Addon/releases)
-![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)
+![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)
 
 Überwachen und steuern Sie Ihre Viessmann-Heizungsanlage direkt aus Home Assistant mit professioneller Protokollunterstützung!
 
@@ -18,7 +18,7 @@ Dieses Add-on bietet eine umfassende Web-Oberfläche zur Kommunikation mit Viess
 - **🪶 Lightweight**: Optimized Alpine Linux container with minimal resource usage
 - **📈 Data Logging**: Historical data collection and export capabilities
 - **🔧 Advanced Diagnostics**: Protocol analyzer and debugging tools
-- **🏠 Home Assistant Integration**: Native sensor and entity creation
+- **🏠 Home Assistant Integration**: REST API for manually configured sensors; no automatic entity creation
 - **🔒 Secure**: Runs with appropriate permissions and security context
 
 ## 🎯 Supported Devices

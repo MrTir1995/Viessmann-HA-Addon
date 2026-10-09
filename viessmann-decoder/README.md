@@ -121,6 +121,14 @@ erzwingt im Programm 1200 Baud/8E1; `REMOTE_MODEL` (`vitotrol200`/`vitotrol300`)
 Existiert `/data/options.json`, hat diese Datei Vorrang vor Umgebungsvariablen.
 Über `/settings` gespeicherte Werte unter `/data/ui_settings.json` haben Vorrang
 vor Add-on-Optionen und Umgebungsvariablen.
+Im Standalone-Container sind die seriellen Verbindungseinstellungen einschließlich
+des Gerätepfads sowie Log-Level und USB/IP unter `http://<host>:8099/settings`
+änderbar. Die Änderungen werden im eingebundenen Datenverzeichnis gespeichert und
+nach einem Container-Neustart angewendet. Weitere Adapter lassen sich dort
+hinzufügen und über ihre jeweilige Adapter-Einstellungsseite unabhängig
+konfigurieren. Jeder verwendete Host-Adapter muss zusätzlich als Docker-Gerät
+in `compose.yaml` zugeordnet sein; die Weboberfläche kann keine Geräte in den
+Container durchreichen.
 Die Integration legt keine Decoder-Konfiguration an.
 
 **Netzwerksicherheit:** Die API und Weboberfläche haben keine Authentifizierung;

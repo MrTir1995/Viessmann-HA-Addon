@@ -14,13 +14,18 @@ services:
     volumes:
       - viessmann-data:/data
     environment:
-      SERIAL_PORT: /dev/ttyUSB0
+      SERIAL_PORT: "${SERIAL_PORT:-/dev/ttyUSB0}"
       BAUD_RATE: "${BAUD_RATE:-1200}"
       PROTOCOL: "${PROTOCOL:-km_remote}"
       SERIAL_CONFIG: "${SERIAL_CONFIG:-8E1}"
       REMOTE_MODEL: "${REMOTE_MODEL:-vitotrol300}"
       REMOTE_SLOT: "${REMOTE_SLOT:-1}"
       INVERT_SERIAL: "${INVERT_SERIAL:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      USBIP_ENABLE: "${USBIP_ENABLE:-false}"
+      USBIP_HOST: "${USBIP_HOST:-}"
+      USBIP_BUSID: "${USBIP_BUSID:-}"
+      USBIP_PORT: "${USBIP_PORT:-3240}"
 
 volumes:
   viessmann-data:

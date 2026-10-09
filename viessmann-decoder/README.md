@@ -1,4 +1,4 @@
-# Viessmann Decoder - Home Assistant Add-on
+# Viessmann Decoder - Docker-Container und Home Assistant Add-on
 
 [![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-HA-Addon)
 [![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-HA-Addon?logo=github)](https://github.com/MrTir1995/Viessmann-HA-Addon/releases)
@@ -7,6 +7,66 @@
 Überwachen und steuern Sie Ihre Viessmann-Heizungsanlage direkt aus Home Assistant mit professioneller Protokollunterstützung!
 
 Dieses Add-on bietet eine umfassende Web-Oberfläche zur Kommunikation mit Viessmann-Heizungssteuerungen unter Verwendung mehrerer Industriestandard-Protokolle (VBUS, KW-Bus, P300/Optolink, KM-Bus).
+
+## Standalone-Dockerbetrieb (ohne Supervisor)
+
+Der Decoder läuft auch neben Home Assistant Container oder auf einem anderen
+Linux-Host im Netzwerk. Home Assistant und dessen Supervisor werden zum Betrieb
+des Decoders nicht benötigt. Alle Build-Dateien liegen in diesem Verzeichnis.
+
+```bash
+cd /pfad/zum/Viessmann-HA-Addon/viessmann-decoder
+docker compose up -d --build
+```
+
+Die mitgelieferte `compose.yaml` baut das vorhandene Dockerfile mit Alpine als
+Basis, reicht ausschließlich den seriellen Adapter durch und veröffentlicht Port
+8099. Weboberfläche: `http://<decoder-host>:8099`, API: `/data`,
+Container-Healthcheck: `/health`. Kein `privileged`-Modus erforderlich.
+Auf dem Decoder-Host muss der passende Busadapter angeschlossen sein; der
+Netzwerkzugriff von Home Assistant erfolgt über HTTP, nicht über USB/IP.
+
+Adapter und Protokoll können beim Start gesetzt werden:
+
+```bash
+SERIAL_DEVICE=/dev/serial/by-id/usb-mein-adapter \
+PROTOCOL=p300 BAUD_RATE=4800 SERIAL_CONFIG=8E2 \
+docker compose up -d --build
+docker compose logs -f
+```
+
+Alternativ kann im selben Verzeichnis eine lokale `.env`-Datei mit diesen
+Werten verwendet werden. `SERIAL_DEVICE` ist der Gerätepfad auf dem Host; Compose
+bildet ihn im Container auf `/dev/ttyUSB0` ab.
+
+Ohne Compose:
+
+```bash
+docker build -t viessmann-decoder:local .
+docker run -d --name viessmann-decoder --init --restart unless-stopped \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 -p 8099:8099 \
+  -e SERIAL_PORT=/dev/ttyUSB0 -e PROTOCOL=vbus \
+  -e BAUD_RATE=9600 -e SERIAL_CONFIG=8N1 viessmann-decoder:local
+```
+
+Ohne `/data/options.json` liest `run.sh` die Umgebungsvariablen `SERIAL_PORT`,
+`BAUD_RATE`, `PROTOCOL`, `SERIAL_CONFIG`, `REMOTE_MODEL`, `REMOTE_SLOT` und
+`INVERT_SERIAL`. Standardwerte entsprechen dem Add-on (VBUS, 9600 Baud, 8N1).
+Für KW/P300 Baudrate und Parität passend zur Anlage einstellen. `km_remote`
+erzwingt im Programm 1200 Baud/8E1; `REMOTE_MODEL` (`vitotrol200`/`vitotrol300`),
+`REMOTE_SLOT` (1–3) und `INVERT_SERIAL` (`true`/`false`) bleiben konfigurierbar.
+Existiert `/data/options.json`, hat diese Datei Vorrang, damit der bisherige
+Add-on-Betrieb unverändert bleibt. Die Integration legt keine Decoder-Konfiguration
+an und benötigt kein Datenvolume.
+
+**Netzwerksicherheit:** Die API und Weboberfläche haben keine Authentifizierung;
+im Vitotrol-Modus sind auch Steuerbefehle möglich. Port 8099 nur für
+vertrauenswürdige Geräte im LAN/VPN freigeben, niemals direkt ins Internet.
+Für verschlüsselten Zugriff einen HTTPS-Reverse-Proxy verwenden.
+
+**Home Assistant:** Die mitgelieferte Custom Integration unter
+`custom_components/viessmann_decoder` erstellt Entitäten automatisch.
+Installation und Einrichtung: [INTEGRATION.md](INTEGRATION.md#custom-integration-empfohlen).
 
 ## ✨ Features
 
@@ -18,7 +78,7 @@ Dieses Add-on bietet eine umfassende Web-Oberfläche zur Kommunikation mit Viess
 - **🪶 Lightweight**: Optimized Alpine Linux container with minimal resource usage
 - **📈 Data Logging**: Historical data collection and export capabilities
 - **🔧 Advanced Diagnostics**: Protocol analyzer and debugging tools
-- **🏠 Home Assistant Integration**: REST API for manually configured sensors; no automatic entity creation
+- **🏠 Home Assistant Integration**: Custom integration with automatic sensor entities via the REST API
 - **🔒 Secure**: Runs with appropriate permissions and security context
 
 ## 🎯 Supported Devices

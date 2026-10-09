@@ -13,7 +13,15 @@
 
 Das Add-on unterstützt VBUS, KW-Bus, P300/Optolink und KM-Bus. Ab Version **2.3.0** steht zusätzlich eine **experimentelle Vitotrol-200/300-Emulation** als KM-Bus-Slave zur Verfügung. Funktionsumfang und Kompatibilität hängen von der Regelung und dem verwendeten Busadapter ab.
 
-> **Wichtig:** Das Add-on ist keine vollständige Home-Assistant-Integration und erstellt keine Entitäten automatisch. Sensoren können über die REST-API eingerichtet werden. Die Vitotrol-Emulation ist kein verifizierter Ersatz für eine physische Fernbedienung.
+> **Wichtig:** Das Add-on selbst erstellt keine Entitäten. Die mitgelieferte [Custom Integration](viessmann-decoder/INTEGRATION.md#custom-integration-empfohlen) legt Sensoren über die REST-API automatisch an. Die Vitotrol-Emulation ist kein verifizierter Ersatz für eine physische Fernbedienung.
+
+## Dockerbetrieb ohne Home Assistant Supervisor
+
+Der Decoder kann als eigenständiger Container neben Home Assistant Container
+oder auf einem separaten Linux-Host betrieben werden. Unter
+[`viessmann-decoder`](viessmann-decoder/README.md#standalone-dockerbetrieb-ohne-supervisor)
+liegen Compose-Konfiguration, Dockerfile und die Custom Integration.
+Der vorhandene Add-on-Betrieb bleibt erhalten.
 
 ## 🚀 Schnellinstallation
 
@@ -34,7 +42,7 @@ Für detaillierte Installationsanweisungen siehe [INSTALL.md](viessmann-decoder/
 - 🔍 **Automatische Erkennung**: Erkennt automatisch Geräte auf dem Bus
 - ⚙️ **Einfache Konfiguration**: Intuitive Einrichtung über Home Assistant UI
 - 🪶 **Leichtgewichtig**: Auf Alpine Linux basierend für minimalen Ressourcenverbrauch
-- 🏠 **Home Assistant Integration**: Ingress-Weboberfläche und REST-API für manuell konfigurierte Sensoren
+- 🏠 **Home Assistant Integration**: Ingress-Weboberfläche, REST-API und Custom Integration mit automatischen Sensoren
 - 🎛️ **Experimentelle Fernbedienung**: Raumtemperatur, Solltemperatur und grundlegende Betriebsarten im Modus `km_remote`
 - 📦 **Docker-Images**: Veröffentlichung auf Docker Hub für alle fünf aufgeführten Architekturen
 

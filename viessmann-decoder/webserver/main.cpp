@@ -349,7 +349,7 @@ int parseJsonNumber(const std::string& body, const char* key, float& value) {
     while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') ++start;
     char* end = nullptr;
     const float parsed = strtof(start, &end);
-    if (end == start || !isfinite(parsed)) return -1;
+    if (end == start || !std::isfinite(parsed)) return -1;
     while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
     if (*end != ',' && *end != '}') return -1;
     value = parsed;

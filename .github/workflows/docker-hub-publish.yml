@@ -50,12 +50,20 @@ jobs:
 
       - name: Get version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
-            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${VERSION#v}"
           fi
+          if [[ ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Invalid Docker version tag"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and push ${{ matrix.arch }}
         uses: docker/build-push-action@v6
@@ -86,17 +94,25 @@ jobs:
 
       - name: Get version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "VERSION=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
-            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${VERSION#v}"
           fi
+          if [[ ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Invalid Docker version tag"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create and push manifest
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          VERSION=${{ steps.version.outputs.VERSION }}
-          
           # Erstelle Manifest für spezifische Version
           docker buildx imagetools create -t mrtir071/viessmann-decoder:${VERSION} \
             mrtir071/viessmann-decoder-amd64:${VERSION} \

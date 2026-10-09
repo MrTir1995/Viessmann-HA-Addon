@@ -17,6 +17,7 @@
 
 #if defined(ESP32)
   #include <WiFi.h>
+  #define debugSerial Serial
   #include <WebServer.h>
   #include <Preferences.h>
   #define WEBSERVER_CLASS WebServer
@@ -71,7 +72,8 @@ Config config = {
 #if defined(ESP32)
   HardwareSerial vbusSerial(2);
 #elif defined(ESP8266)
-  #define vbusSerial Serial
+  HardwareSerial& vbusSerial = Serial;
+  #define debugSerial Serial1  // TX-only diagnostics on GPIO2, separate from the bus UART.
 #endif
 
 VBUSDecoder vbus(&vbusSerial);
@@ -121,9 +123,9 @@ const LanguageStrings* lang = &lang_en;
 // ============================================================================
 
 void setup() {
-  Serial.begin(115200);
+  debugSerial.begin(115200);
   delay(1000);
-  Serial.println("\n\nViessmann Enhanced Web Server");
+  debugSerial.println("\n\nViessmann Enhanced Web Server");
   
   loadConfig();
   
@@ -131,19 +133,19 @@ void setup() {
   lang = (config.language == 1) ? &lang_de : &lang_en;
   
   // Connect to WiFi
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
+  debugSerial.print("Connecting to WiFi: ");
+  debugSerial.println(ssid);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    debugSerial.print(".");
   }
   
-  Serial.println("\nWiFi connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  debugSerial.println("\nWiFi connected!");
+  debugSerial.print("IP address: ");
+  debugSerial.println(WiFi.localIP());
   
   // Apply configuration
   applyConfig();
@@ -164,9 +166,9 @@ void setup() {
   server.on("/language", HTTP_POST, handleLanguage);
   
   server.begin();
-  Serial.println("Web server started");
-  Serial.print("Access at: http://");
-  Serial.println(WiFi.localIP());
+  debugSerial.println("Web server started");
+  debugSerial.print("Access at: http://");
+  debugSerial.println(WiFi.localIP());
 }
 
 // ============================================================================
@@ -251,7 +253,7 @@ void handleHistory() {
 
 void handleGraphData() {
   uint32_t now = millis() / 1000;
-  uint32_t startTime = now - 86400;  // Last 24 hours
+  uint32_t startTime = now >= 86400 ? now - 86400 : 0;  // Last 24 hours
   
   String json = logger.exportJSON(startTime, now);
   server.send(200, "application/json", json);
@@ -292,7 +294,7 @@ void handleSaveConfig() {
 
 void handleExport() {
   uint32_t now = millis() / 1000;
-  uint32_t startTime = now - 86400;
+  uint32_t startTime = now >= 86400 ? now - 86400 : 0;
   String csv = logger.exportCSV(startTime, now);
   server.send(200, "text/csv", csv);
 }
@@ -404,7 +406,7 @@ void loadConfig() {
     config.rxPin = preferences.getUChar("rxPin", 16);
     config.txPin = preferences.getUChar("txPin", 17);
     config.language = preferences.getUChar("language", 0);
-    Serial.println("Configuration loaded");
+    debugSerial.println("Configuration loaded");
   }
   preferences.end();
 #elif defined(USE_EEPROM)
@@ -413,7 +415,7 @@ void loadConfig() {
   EEPROM.get(0, tempConfig);
   if (tempConfig.magic == CONFIG_MAGIC) {
     config = tempConfig;
-    Serial.println("Configuration loaded");
+    debugSerial.println("Configuration loaded");
   }
 #endif
 }

@@ -54,6 +54,7 @@ inline const char* adapterSettingsPanel() {
         <label for="adapter-settings-baud">Baudrate</label>
         <select id="adapter-settings-baud" name="baud_rate">
           <option value="1200">1200</option>
+          <option value="2400">2400</option>
           <option value="4800">4800</option><option value="9600" selected>9600</option>
           <option value="19200">19200</option><option value="38400">38400</option><option value="57600">57600</option>
           <option value="115200">115200</option>
@@ -161,7 +162,10 @@ inline const char* adapterSettingsPanel() {
         if (base) {
           const links = textElement('div', '');
           links.className = 'adapter-links';
-          [['Einstellungen', '/settings'], ['Fernbedienung', '/remote'], ['API-Basis: /adapters/' + adapter.id, '/']].forEach(item => {
+          const destinations = [['Einstellungen', '/settings']];
+          if (name === 'km_remote') destinations.push(['Fernbedienung', '/remote']);
+          destinations.push(['API-Basis: /adapters/' + adapter.id, '/']);
+          destinations.forEach(item => {
             const link = textElement('a', item[0]);
             link.href = base + item[1];
             links.appendChild(link);

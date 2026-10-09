@@ -12,8 +12,9 @@
  * 4. See PROTOCOLS.md for complete KM-Bus documentation
  * 
  * Hardware Setup:
- * - Connect Arduino RX (Pin 8) to Vitotronic KW-Bus TX
- * - Connect Arduino TX (Pin 9) to Vitotronic KW-Bus RX
+ * - Requires a board with Serial1 supporting 8E2 (e.g. Arduino Mega 2560)
+ * - Connect Serial1 RX (Mega Pin 19) to Vitotronic KW-Bus TX
+ * - Connect Serial1 TX (Mega Pin 18) to Vitotronic KW-Bus RX
  * - Connect GND between Arduino and Vitotronic
  * - Use proper level conversion if needed (RS-232 to TTL)
  * - Consider using electrical isolation for safety
@@ -38,13 +39,11 @@
  * Date: January 2026
  */
 
-#include <SoftwareSerial.h>
 #include <vbusdecoder.h>
 
-// Pin configuration
-// RX Pin 8 - receives data from Vitotronic
-// TX Pin 9 - sends data to Vitotronic (if needed for future bidirectional communication)
-SoftwareSerial kwSerial(8, 9);
+// Hardware UART required: standard SoftwareSerial cannot provide 8E2.
+// Arduino Mega 2560 Serial1 uses RX Pin 19 and TX Pin 18.
+HardwareSerial& kwSerial = Serial1;
 VBUSDecoder decoder(&kwSerial);
 
 // Update interval for serial output
@@ -71,8 +70,7 @@ void setup() {
   
   // Initialize KW-Bus serial communication
   // IMPORTANT: KW-Bus requires 4800 baud, 8 data bits, Even parity, 2 stop bits
-  // NOTE: SERIAL_8E2 (even parity) is not supported by all Arduino cores
-  // For boards without even parity support in SoftwareSerial, use hardware serial (Serial1, Serial2, etc.)
+  // Use a board/core whose hardware Serial1 supports SERIAL_8E2.
   kwSerial.begin(4800, SERIAL_8E2);
   
   // Initialize decoder with KW-Bus protocol
@@ -82,8 +80,7 @@ void setup() {
   Serial.println(F("  Protocol: KW-Bus (VS1)"));
   Serial.println(F("  Baud Rate: 4800"));
   Serial.println(F("  Format: 8E2 (8 data bits, Even parity, 2 stop bits)"));
-  Serial.println(F("  RX Pin: 8"));
-  Serial.println(F("  TX Pin: 9"));
+  Serial.println(F("  UART: Serial1 (Mega RX=19, TX=18)"));
   Serial.println();
   Serial.println(F("Waiting for data from Vitotronic 200..."));
   Serial.println();

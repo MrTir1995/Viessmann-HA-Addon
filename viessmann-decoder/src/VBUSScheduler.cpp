@@ -60,7 +60,7 @@ uint8_t VBUSScheduler::addTimeRule(uint8_t hour, uint8_t minute, uint8_t daysOfW
 
 uint8_t VBUSScheduler::addTemperatureRule(uint8_t sensorIndex, float threshold, bool aboveThreshold,
                                           ActionType action, uint8_t actionValue1, float actionValue2) {
-  if (_ruleCount >= _maxRules) return 0;
+  if (_ruleCount >= _maxRules || sensorIndex >= 32) return 0;
   
   ScheduleRule& rule = _rules[_ruleCount++];
   rule.id = _nextRuleId++;
@@ -219,6 +219,7 @@ bool VBUSScheduler::_checkTimeRule(const ScheduleRule& rule) {
 }
 
 bool VBUSScheduler::_checkTemperatureRule(const ScheduleRule& rule) {
+  if (rule.tempCondition.sensorIndex >= 32) return false;
   float temp = _decoder->getTemp(rule.tempCondition.sensorIndex);
   
   // Check for invalid temperature

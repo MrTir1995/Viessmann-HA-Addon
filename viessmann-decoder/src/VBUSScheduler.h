@@ -38,7 +38,7 @@ struct TimeSchedule {
 
 // Temperature-based condition
 struct TemperatureCondition {
-  uint8_t sensorIndex;       // Which temperature sensor to monitor
+  uint8_t sensorIndex;       // Which temperature sensor to monitor (0-31)
   float threshold;           // Temperature threshold
   bool aboveThreshold;       // Trigger when above (true) or below (false)
 };

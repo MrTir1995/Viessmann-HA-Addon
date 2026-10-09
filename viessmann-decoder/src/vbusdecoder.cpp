@@ -9,22 +9,30 @@
 VBUSDecoder::VBUSDecoder(Stream* serial):
   _stream(serial),
   _protocol(PROTOCOL_VBUS),
+  _state(SYNC),
+  _dstAddr(0),
+  _srcAddr(0),
+  _protocolVer(0),
+  _cmd(0),
+  _frameCnt(0),
+  _frameLen(0),
+  _rcvBuffer{0},
+  _rcvBufferIdx(0),
+  _errorFlag(false),
+  _readyFlag(false),
   _temp{0},
-  _relay{0},
   _pump{0},
+  _relay{0},
   _tempNum(0),
   _relayNum(0),
   _pumpNum(0),
-  _errorFlag(false),
-  _readyFlag(false),
-  _rcvBuffer{0},
-  _rcvBufferIdx(0),
-  _state(SYNC),
+  _lastMillis(0),
   _errorMask(0),
   _systemTime(0),
   _operatingHours{0},
   _heatQuantity(0),
   _systemVariant(0),
+  _lastByteMillis(0),
   _participantCount(0),
   _autoDiscoveryEnabled(true),
   _kmBusMode(0),
@@ -55,11 +63,20 @@ VBUSDecoder::~VBUSDecoder()
 
 void VBUSDecoder::begin(ProtocolType protocol) {
   _protocol = protocol;
-  _lastMillis = millis();
+  _lastMillis = static_cast<uint32_t>(millis());
+  _lastByteMillis = _lastMillis;
+  _resetReceiveState();
+  _errorFlag = false;
+  _readyFlag = false;
+  _tempNum = _pumpNum = _relayNum = 0;
   _state = SYNC;
 }
 
 void VBUSDecoder::loop() {
+  if (_state == RECEIVE &&
+      static_cast<uint32_t>(millis() - _lastByteMillis) >= RECEIVE_TIMEOUT_MS) {
+    _errorHandler();
+  }
   // Dispatch to protocol-specific handlers based on selected protocol
   switch (_protocol) {
     case PROTOCOL_VBUS:
@@ -145,15 +162,15 @@ void VBUSDecoder::loop() {
 }
 
 const float VBUSDecoder::getTemp(uint8_t idx) const {
-  return _temp[idx];
+  return idx < 32 ? _temp[idx] : 0.0f;
 }
 
 const uint8_t VBUSDecoder::getPump(uint8_t idx) const {
-  return _pump[idx];
+  return idx < 32 ? _pump[idx] : 0;
 }
 
 const bool VBUSDecoder::getRelay(uint8_t idx) const {
-  return _relay[idx];
+  return idx < 32 ? _relay[idx] : false;
 }
 
 uint8_t const VBUSDecoder::getTempNum() const {
@@ -398,19 +415,24 @@ void VBUSDecoder::_headerDecoder() {
   _frameLen = _rcvBuffer[7] * 6 + 10;
 }
 
+void VBUSDecoder::_resetReceiveState() {
+  _rcvBufferIdx = 0;
+  _dstAddr = 0;
+  _srcAddr = 0;
+  _protocolVer = 0;
+  _cmd = 0;
+  _frameCnt = 0;
+  _frameLen = 0;
+}
+
 //VBUS Sync handler
 void VBUSDecoder::_vbusSyncHandler() {
-  if (millis() - _lastMillis > 20 * 1000UL) // if no packet arrived in last 20 sec go to error state
+  if (static_cast<uint32_t>(millis() - _lastMillis) > 20 * 1000UL) // if no packet arrived in last 20 sec go to error state
     _state = ERROR;
   if (_stream->available() > 0)
     if (_stream->read() == 0xaa) { // Sync byte has been received
-      _rcvBufferIdx = 0;
-      _dstAddr = 0;
-      _srcAddr = 0;
-      _protocolVer = 0;
-      _cmd = 0;
-      _frameCnt = 0;
-      _frameLen = 0;
+      _resetReceiveState();
+      _lastByteMillis = static_cast<uint32_t>(millis());
       _state = RECEIVE;
     }
 }
@@ -422,6 +444,7 @@ void VBUSDecoder::_vbusReceiveHandler() {
   while (_stream->available() > 0) {
     int readByte = _stream->read();
     if (readByte < 0) return;
+    _lastByteMillis = static_cast<uint32_t>(millis());
     uint8_t rcvByte = (uint8_t)readByte;
 
     // MSB is set - according to protocol description the receiving has to be stopped
@@ -492,6 +515,18 @@ void VBUSDecoder::_vbusDecodeHandler() {
 
   // Only packets carrying command 0x0100 - Master to slave are in focus
   if (_cmd == 0x0100) {
+    uint8_t requiredFrames = 2;
+    switch (_srcAddr) {
+      case 0x1060: requiredFrames = 6; break;
+      case 0x7E11:
+      case 0x7E21: requiredFrames = 3; break;
+      case 0x7E31: requiredFrames = 2; break;
+      default: break;
+    }
+    if (_frameCnt < requiredFrames) {
+      _errorHandler();
+      return;
+    }
 
     switch (_srcAddr) {
       case 0x1060:  // Vitosolic 200
@@ -519,6 +554,7 @@ void VBUSDecoder::_vbusDecodeHandler() {
 void VBUSDecoder::_errorHandler() {
   _errorFlag = true;
   _readyFlag = false;
+  _resetReceiveState();
   _state = SYNC;
 }
 
@@ -619,8 +655,13 @@ void VBUSDecoder::_vitosolic200Decoder() {
   //**************************************************
 
   _tempNum = 12;
-  _relayNum = 7;
-  _pumpNum = 7;
+  _relayNum = _pumpNum = _frameCnt >= 13 ? 7 : (_frameCnt >= 12 ? 4 : 0);
+  _errorMask = _systemTime = 0;
+  _systemVariant = 0;
+  for (uint8_t i = 0; i < 7; ++i) {
+    _pump[i] = 0;
+    _relay[i] = false;
+  }
 
   // Frame 1: Temperatures S1-S2
   _rcvBufferIdx = 9;
@@ -665,25 +706,27 @@ void VBUSDecoder::_vitosolic200Decoder() {
   _temp[11] = _calcTemp(_rcvBuffer[_rcvBufferIdx + 3], _rcvBuffer[_rcvBufferIdx + 2]);
 
   // Frame 12: Pump/Relay data 1-4
-  _rcvBufferIdx = 75;
-  _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
-
-  _pump[0] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
-  _pump[1] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
-  _pump[2] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
-  _pump[3] = _rcvBuffer[_rcvBufferIdx + 3] & 0x7F;
+  if (_frameCnt >= 12) {
+    _rcvBufferIdx = 75;
+    _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
+    _pump[0] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
+    _pump[1] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
+    _pump[2] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
+    _pump[3] = _rcvBuffer[_rcvBufferIdx + 3] & 0x7F;
+  }
 
   // Frame 13: Pump/Relay data 5-7 + Error mask byte 1
-  _rcvBufferIdx = 81;
-  _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
-
-  _pump[4] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
-  _pump[5] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
-  _pump[6] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
+  if (_frameCnt >= 13) {
+    _rcvBufferIdx = 81;
+    _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
+    _pump[4] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
+    _pump[5] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
+    _pump[6] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
+  }
 
   // Frame 14: Error mask + System time + System variant
   _rcvBufferIdx = 87;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 14) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
 
     // Error mask (2 bytes)
@@ -695,7 +738,7 @@ void VBUSDecoder::_vitosolic200Decoder() {
 
   // Frame 15: System variant
   _rcvBufferIdx = 93;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 15) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _systemVariant = _rcvBuffer[_rcvBufferIdx] & 0x7F;
   }
@@ -727,8 +770,11 @@ void VBUSDecoder::_deltaSolBXDecoder() {
   //28      Software version        0.01    -
 
   _tempNum = 6;
-  _pumpNum = 2;
-  _relayNum = 2;
+  _pumpNum = _relayNum = _frameCnt >= 5 ? 2 : 0;
+  _pump[0] = _pump[1] = 0;
+  _relay[0] = _relay[1] = false;
+  _operatingHours[0] = _operatingHours[1] = 0;
+  _heatQuantity = 0;
 
   // Frame 1: Temperatures S1-S2
   _rcvBufferIdx = 9;
@@ -750,7 +796,7 @@ void VBUSDecoder::_deltaSolBXDecoder() {
 
   // Frame 5: Pump speeds and relay states
   _rcvBufferIdx = 33;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 5) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _pump[0] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
     _pump[1] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
@@ -760,7 +806,7 @@ void VBUSDecoder::_deltaSolBXDecoder() {
 
   // Frame 6: Operating hours
   _rcvBufferIdx = 39;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 6) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _operatingHours[0] = (_rcvBuffer[_rcvBufferIdx + 1] << 8) | _rcvBuffer[_rcvBufferIdx];
     _operatingHours[1] = (_rcvBuffer[_rcvBufferIdx + 3] << 8) | _rcvBuffer[_rcvBufferIdx + 2];
@@ -768,7 +814,7 @@ void VBUSDecoder::_deltaSolBXDecoder() {
 
   // Frame 7: Heat quantity
   _rcvBufferIdx = 45;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 7) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _heatQuantity = (_rcvBuffer[_rcvBufferIdx + 1] << 8) | _rcvBuffer[_rcvBufferIdx];
   }
@@ -792,8 +838,13 @@ void VBUSDecoder::_deltaSolMXDecoder() {
   //20      Error mask              1       -
 
   _tempNum = 4;
-  _pumpNum = 4;
-  _relayNum = 4;
+  _pumpNum = _relayNum = _frameCnt >= 3 ? 4 : 0;
+  for (uint8_t i = 0; i < 4; ++i) {
+    _pump[i] = 0;
+    _relay[i] = false;
+  }
+  _operatingHours[0] = _operatingHours[1] = 0;
+  _heatQuantity = _errorMask = 0;
 
   // Frame 1: Temperatures S1-S2
   _rcvBufferIdx = 9;
@@ -808,12 +859,14 @@ void VBUSDecoder::_deltaSolMXDecoder() {
   _temp[3] = _calcTemp(_rcvBuffer[_rcvBufferIdx + 3], _rcvBuffer[_rcvBufferIdx + 2]);
 
   // Frame 3: Pump speeds
-  _rcvBufferIdx = 21;
-  _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
-  _pump[0] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
-  _pump[1] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
-  _pump[2] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
-  _pump[3] = _rcvBuffer[_rcvBufferIdx + 3] & 0x7F;
+  if (_frameCnt >= 3) {
+    _rcvBufferIdx = 21;
+    _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
+    _pump[0] = _rcvBuffer[_rcvBufferIdx] & 0x7F;
+    _pump[1] = _rcvBuffer[_rcvBufferIdx + 1] & 0x7F;
+    _pump[2] = _rcvBuffer[_rcvBufferIdx + 2] & 0x7F;
+    _pump[3] = _rcvBuffer[_rcvBufferIdx + 3] & 0x7F;
+  }
 
   // Calculate relay states
   for (uint8_t i = 0; i < 4; i++)
@@ -821,7 +874,7 @@ void VBUSDecoder::_deltaSolMXDecoder() {
 
   // Frame 4: Operating hours
   _rcvBufferIdx = 27;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 4) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _operatingHours[0] = (_rcvBuffer[_rcvBufferIdx + 1] << 8) | _rcvBuffer[_rcvBufferIdx];
     _operatingHours[1] = (_rcvBuffer[_rcvBufferIdx + 3] << 8) | _rcvBuffer[_rcvBufferIdx + 2];
@@ -829,14 +882,14 @@ void VBUSDecoder::_deltaSolMXDecoder() {
 
   // Frame 5: Heat quantity
   _rcvBufferIdx = 33;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 5) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _heatQuantity = (_rcvBuffer[_rcvBufferIdx + 1] << 8) | _rcvBuffer[_rcvBufferIdx];
   }
 
   // Frame 6: Error mask
   _rcvBufferIdx = 39;
-  if (_rcvBufferIdx + 4 < 255) {
+  if (_frameCnt >= 6) {
     _septetInject(_rcvBuffer, _rcvBufferIdx, 4);
     _errorMask = (_rcvBuffer[_rcvBufferIdx + 1] << 8) | _rcvBuffer[_rcvBufferIdx];
   }
@@ -849,12 +902,13 @@ void VBUSDecoder::_deltaSolMXDecoder() {
 // KW-Bus Sync handler
 // KW protocol uses 0x01 as sync byte followed by length
 void VBUSDecoder::_kwSyncHandler() {
-  if (millis() - _lastMillis > 20 * 1000UL) // if no packet arrived in last 20 sec go to error state
+  if (static_cast<uint32_t>(millis() - _lastMillis) > 20 * 1000UL) // if no packet arrived in last 20 sec go to error state
     _state = ERROR;
   if (_stream->available() > 0) {
     uint8_t syncByte = _stream->read();
     if (syncByte == 0x01) { // KW-Bus sync/start byte
-      _rcvBufferIdx = 0;
+      _resetReceiveState();
+      _lastByteMillis = static_cast<uint32_t>(millis());
       _rcvBuffer[_rcvBufferIdx++] = syncByte;
       _state = RECEIVE;
     }
@@ -871,7 +925,10 @@ void VBUSDecoder::_kwReceiveHandler() {
       return;
     }
 
-    uint8_t rcvByte = _stream->read();
+    int readByte = _stream->read();
+    if (readByte < 0) return;
+    uint8_t rcvByte = static_cast<uint8_t>(readByte);
+    _lastByteMillis = static_cast<uint32_t>(millis());
     _rcvBuffer[_rcvBufferIdx++] = rcvByte;
 
     // Check if we have at least sync + length byte
@@ -947,13 +1004,14 @@ void VBUSDecoder::_kwDefaultDecoder() {
 // P300 Sync handler
 // P300 uses 0x05 as sync/ack byte
 void VBUSDecoder::_p300SyncHandler() {
-  if (millis() - _lastMillis > 20 * 1000UL)
+  if (static_cast<uint32_t>(millis() - _lastMillis) > 20 * 1000UL)
     _state = ERROR;
 
   if (_stream->available() > 0) {
     uint8_t syncByte = _stream->read();
     if (syncByte == 0x05 || syncByte == 0x01) { // P300 response or request start
-      _rcvBufferIdx = 0;
+      _resetReceiveState();
+      _lastByteMillis = static_cast<uint32_t>(millis());
       _rcvBuffer[_rcvBufferIdx++] = syncByte;
       _state = RECEIVE;
     }
@@ -964,7 +1022,10 @@ void VBUSDecoder::_p300SyncHandler() {
 // Format: <start> <len> <type> <addr_high> <addr_low> <data...> <checksum>
 void VBUSDecoder::_p300ReceiveHandler() {
   while (_stream->available() > 0) {
-    uint8_t rcvByte = _stream->read();
+    int readByte = _stream->read();
+    if (readByte < 0) return;
+    uint8_t rcvByte = static_cast<uint8_t>(readByte);
+    _lastByteMillis = static_cast<uint32_t>(millis());
     _rcvBuffer[_rcvBufferIdx++] = rcvByte;
 
     if (_rcvBufferIdx >= MAX_BUFFER_SIZE) {
@@ -1047,13 +1108,14 @@ void VBUSDecoder::_p300DefaultDecoder() {
 // KM-Bus Sync handler
 // KM-Bus is similar to M-Bus with specific framing
 void VBUSDecoder::_kmSyncHandler() {
-  if (millis() - _lastMillis > 20 * 1000UL)
+  if (static_cast<uint32_t>(millis() - _lastMillis) > 20 * 1000UL)
     _state = ERROR;
 
   if (_stream->available() > 0) {
     uint8_t syncByte = _stream->read();
     if (syncByte == 0x68) { // M-Bus/KM-Bus start byte
-      _rcvBufferIdx = 0;
+      _resetReceiveState();
+      _lastByteMillis = static_cast<uint32_t>(millis());
       _rcvBuffer[_rcvBufferIdx++] = syncByte;
       _state = RECEIVE;
     }
@@ -1064,7 +1126,10 @@ void VBUSDecoder::_kmSyncHandler() {
 // Format: 0x68 <len> <len> 0x68 <data...> <checksum_low> <checksum_high> 0x16
 void VBUSDecoder::_kmReceiveHandler() {
   while (_stream->available() > 0) {
-    uint8_t rcvByte = _stream->read();
+    int readByte = _stream->read();
+    if (readByte < 0) return;
+    uint8_t rcvByte = static_cast<uint8_t>(readByte);
+    _lastByteMillis = static_cast<uint32_t>(millis());
     _rcvBuffer[_rcvBufferIdx++] = rcvByte;
 
     if (_rcvBufferIdx >= MAX_BUFFER_SIZE) {

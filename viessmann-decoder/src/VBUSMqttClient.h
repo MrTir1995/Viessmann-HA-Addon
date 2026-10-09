@@ -69,9 +69,9 @@ class VBUSMqttClient {
     
     // Helper methods
     void _reconnect();
-    void _publishSensor(const char* name, const char* deviceClass, 
+    bool _publishSensor(const char* name, const char* deviceClass,
                        const char* unit, const char* valueTopic);
-    void _publishBinarySensor(const char* name, const char* deviceClass, 
+    bool _publishBinarySensor(const char* name, const char* deviceClass,
                              const char* valueTopic);
     String _buildTopic(const char* suffix);
     String _buildStateTopic(const char* suffix);

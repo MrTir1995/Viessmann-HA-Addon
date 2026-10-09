@@ -11,6 +11,7 @@ import select
 import socket
 import subprocess
 import tempfile
+import termios
 import time
 import unittest
 import urllib.error
@@ -210,6 +211,77 @@ class AdapterApiTests(unittest.TestCase):
         self.exchange(self.primary_master)
         self.assertEqual(len(self.state()["adapters"]), 2)
 
+    def test_ui_controls_and_cache_policy(self):
+        _, port = self.new_pty()
+        base = self.create(port)
+        for prefix in ["", "/adapters/primary", base]:
+            for route in ["/", "/settings", "/devices", "/remote", "/logs"]:
+                with self.subTest(prefix=prefix, route=route):
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{self.port}{prefix}{route}", timeout=5
+                    ) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+                        page = response.read()
+                    self.assertIn(b"themeToggle", page)
+                    if route == "/":
+                        self.assertIn(b"Add Serial Adapter", page)
+                        self.assertNotIn(b"<span>Add Device</span>", page)
+                    elif route in ["/settings", "/devices"]:
+                        self.assertIn(b'id="adapter-settings-add"', page)
+
+    def test_primary_settings_reject_invalid_json_without_persistence(self):
+        settings = self.options(self.primary_port)
+        settings.pop("serial_port")
+        valid = json.dumps(settings)
+        for body in [
+            valid[:-1], valid + " trailing", '{"nested":' + valid + "}",
+            valid[:-1] + ',"protocol":"vbus"}',
+            valid.replace('"remote_slot": 1', '"remote_slot": 1.5'),
+            valid.replace('"baud_rate": 1200', '"baud_rate": "1200"'),
+            valid.replace('"invert_serial": false', '"invert_serial": falsex'),
+        ]:
+            with self.subTest(body=body):
+                self.assertEqual(self.request("/api/settings", body.encode())[0], 400)
+                self.assertFalse((self.directory / "ui_settings.json").exists())
+        for baud in [2400, 57600]:
+            settings.update(protocol="vbus", baud_rate=baud, serial_config="8N1")
+            self.assertEqual(self.request("/api/settings", settings)[0], 200)
+            self.assertEqual(json.loads(
+                (self.directory / "ui_settings.json").read_text())["baud_rate"], baud)
+
+    def test_2400_baud_is_applied_to_serial_device(self):
+        _, port = self.new_pty()
+        base = self.create(port, protocol="vbus", baud_rate=2400, serial_config="8N1")
+        descriptor = os.open(port, os.O_RDWR | os.O_NOCTTY)
+        try:
+            self.wait(lambda: termios.tcgetattr(descriptor)[4:6] ==
+                      [termios.B2400, termios.B2400])
+            settings = termios.tcgetattr(descriptor)
+        finally:
+            os.close(descriptor)
+        self.assertEqual(settings[4:6], [termios.B2400, termios.B2400])
+        self.assertEqual(self.state(base + "/api/settings")["baud_rate"], 2400)
+
+    def test_serial_device_path_json_escaping(self):
+        _, port = self.new_pty()
+        alias = self.directory / "adapter\\Bus"
+        alias.symlink_to(port)
+        base = self.create(str(alias))
+        self.wait(lambda: self.state(base + "/data")["serialConnected"])
+        self.assertEqual(self.state(base + "/data")["serialPort"], str(alias))
+
+    def test_primary_ui_settings_reload_on_native_restart(self):
+        settings = self.options(self.primary_port, remote_model="vitotrol200", remote_slot=3)
+        settings.pop("serial_port")
+        self.assertEqual(self.request("/api/settings", settings)[0], 200)
+        self.assertEqual(self.state("/api/settings")["remote_slot"], 1)
+        self.stop_process()
+        self.start()
+        self.assertEqual(self.state("/api/settings")["remote_model"], "vitotrol200")
+        self.assertEqual(self.state("/api/settings")["remote_slot"], 3)
+        self.exchange(self.primary_master, slot=3)
+
     def test_bad_values_and_duplicate_device_aliases(self):
         master, port = self.new_pty()
         invalid = [
@@ -268,7 +340,8 @@ class AdapterApiTests(unittest.TestCase):
         extra_html = self.request(base + "/settings")[1]
         self.assertIn(b"name='serial_port'", extra_html)
         self.assertIn(b"<option value='57600'>57600</option>", extra_html)
-        self.assertNotIn(b"<option value='2400'", extra_html)
+        self.assertIn(b"<option value='2400'>2400</option>", extra_html)
+        self.assertIn(b"<option value='57600'>57600</option>", primary_html)
         self.assertIn(b"<option value='2400'>2400</option>", primary_html)
         self.assertIn(f"value='{self.primary_port}' readonly".encode(), primary_html)
         self.assertNotIn(f"value='{port}' readonly".encode(), extra_html)

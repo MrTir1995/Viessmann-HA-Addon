@@ -6,6 +6,11 @@
 
 #if defined(ESP32) || defined(ESP8266)
 
+namespace {
+// Include MQTT framing and the full discovery topic/payload buffers.
+constexpr uint16_t discoveryBufferSize = MQTT_MAX_HEADER_SIZE + 2 + 128 + 512;
+}
+
 VBUSMqttClient::VBUSMqttClient(VBUSDecoder* decoder, Client* networkClient) :
   _decoder(decoder),
   _lastPublish(0),
@@ -19,13 +24,16 @@ VBUSMqttClient::~VBUSMqttClient() {
 }
 
 void VBUSMqttClient::begin(const MqttConfig& config) {
-  _config = config;
-  _mqttClient->setServer(_config.broker, _config.port);
+  setConfig(config);
 }
 
 void VBUSMqttClient::setConfig(const MqttConfig& config) {
   _config = config;
+  _discoveryPublished = false;
   _mqttClient->setServer(_config.broker, _config.port);
+  if (_config.useHomeAssistant && _mqttClient->getBufferSize() < discoveryBufferSize) {
+    _mqttClient->setBufferSize(discoveryBufferSize);
+  }
 }
 
 bool VBUSMqttClient::connect() {
@@ -40,7 +48,6 @@ bool VBUSMqttClient::connect() {
   
   if (connected && _config.useHomeAssistant && !_discoveryPublished) {
     publishHomeAssistantDiscovery();
-    _discoveryPublished = true;
   }
   
   return connected;
@@ -60,6 +67,10 @@ void VBUSMqttClient::loop() {
   }
   
   _mqttClient->loop();
+
+  if (_config.useHomeAssistant && !_discoveryPublished) {
+    publishHomeAssistantDiscovery();
+  }
   
   // Check if it's time to publish
   uint32_t now = millis();
@@ -175,48 +186,46 @@ void VBUSMqttClient::publishKMBusData() {
 }
 
 void VBUSMqttClient::publishHomeAssistantDiscovery() {
-  if (!_config.useHomeAssistant) return;
+  if (!_config.useHomeAssistant || !_mqttClient->connected() || !_decoder->isReady()) return;
+  if (_mqttClient->getBufferSize() < discoveryBufferSize &&
+      !_mqttClient->setBufferSize(discoveryBufferSize)) return;
+  bool success = true;
   
   // Publish temperature sensors
   uint8_t tempCount = _decoder->getTempNum();
   for (uint8_t i = 0; i < tempCount; i++) {
-    char objectId[32];
-    snprintf(objectId, sizeof(objectId), "viessmann_temp_%d", i);
     char name[32];
     snprintf(name, sizeof(name), "Temperature %d", i);
     char valueTopic[64];
     snprintf(valueTopic, sizeof(valueTopic), "%s/temperature/%d", _config.baseTopic, i);
-    _publishSensor(name, "temperature", "°C", valueTopic);
+    if (!_publishSensor(name, "temperature", "°C", valueTopic)) success = false;
   }
   
   // Publish pump sensors
   uint8_t pumpCount = _decoder->getPumpNum();
   for (uint8_t i = 0; i < pumpCount; i++) {
-    char objectId[32];
-    snprintf(objectId, sizeof(objectId), "viessmann_pump_%d", i);
     char name[32];
     snprintf(name, sizeof(name), "Pump %d Power", i);
     char valueTopic[64];
     snprintf(valueTopic, sizeof(valueTopic), "%s/pump/%d", _config.baseTopic, i);
-    _publishSensor(name, "power_factor", "%", valueTopic);
+    if (!_publishSensor(name, "power_factor", "%", valueTopic)) success = false;
   }
   
   // Publish relay binary sensors
   uint8_t relayCount = _decoder->getRelayNum();
   for (uint8_t i = 0; i < relayCount; i++) {
-    char objectId[32];
-    snprintf(objectId, sizeof(objectId), "viessmann_relay_%d", i);
     char name[32];
     snprintf(name, sizeof(name), "Relay %d", i);
     char valueTopic[64];
     snprintf(valueTopic, sizeof(valueTopic), "%s/relay/%d", _config.baseTopic, i);
-    _publishBinarySensor(name, "power", valueTopic);
+    if (!_publishBinarySensor(name, "power", valueTopic)) success = false;
   }
   
   // Publish heat quantity sensor
   char valueTopic[64];
   snprintf(valueTopic, sizeof(valueTopic), "%s/energy/heat_quantity", _config.baseTopic);
-  _publishSensor("Heat Quantity", "energy", "Wh", valueTopic);
+  if (!_publishSensor("Heat Quantity", "energy", "Wh", valueTopic)) success = false;
+  _discoveryPublished = success;
 }
 
 void VBUSMqttClient::publishHomeAssistantSensors() {
@@ -244,11 +253,16 @@ void VBUSMqttClient::_reconnect() {
   }
 }
 
-void VBUSMqttClient::_publishSensor(const char* name, const char* deviceClass, 
+bool VBUSMqttClient::_publishSensor(const char* name, const char* deviceClass,
                                    const char* unit, const char* valueTopic) {
+  char objectId[64];
+  snprintf(objectId, sizeof(objectId), "%s", valueTopic);
+  for (char* c = objectId; *c; ++c) {
+    if (*c == '/') *c = '_';
+  }
   char discoveryTopic[128];
   snprintf(discoveryTopic, sizeof(discoveryTopic), 
-           "%s/sensor/%s/config", _config.haDiscoveryPrefix, valueTopic);
+           "%s/sensor/%s/config", _config.haDiscoveryPrefix, objectId);
   
   char payload[512];
   snprintf(payload, sizeof(payload),
@@ -258,14 +272,19 @@ void VBUSMqttClient::_publishSensor(const char* name, const char* deviceClass,
            "\"model\":\"Multi-Protocol\",\"manufacturer\":\"Viessmann\"}}",
            name, deviceClass, unit, valueTopic, valueTopic, _config.clientId);
   
-  _mqttClient->publish(discoveryTopic, payload, true);
+  return _mqttClient->publish(discoveryTopic, payload, true);
 }
 
-void VBUSMqttClient::_publishBinarySensor(const char* name, const char* deviceClass, 
+bool VBUSMqttClient::_publishBinarySensor(const char* name, const char* deviceClass,
                                          const char* valueTopic) {
+  char objectId[64];
+  snprintf(objectId, sizeof(objectId), "%s", valueTopic);
+  for (char* c = objectId; *c; ++c) {
+    if (*c == '/') *c = '_';
+  }
   char discoveryTopic[128];
   snprintf(discoveryTopic, sizeof(discoveryTopic), 
-           "%s/binary_sensor/%s/config", _config.haDiscoveryPrefix, valueTopic);
+           "%s/binary_sensor/%s/config", _config.haDiscoveryPrefix, objectId);
   
   char payload[512];
   snprintf(payload, sizeof(payload),
@@ -276,7 +295,7 @@ void VBUSMqttClient::_publishBinarySensor(const char* name, const char* deviceCl
            "\"model\":\"Multi-Protocol\",\"manufacturer\":\"Viessmann\"}}",
            name, deviceClass, valueTopic, valueTopic, _config.clientId);
   
-  _mqttClient->publish(discoveryTopic, payload, true);
+  return _mqttClient->publish(discoveryTopic, payload, true);
 }
 
 String VBUSMqttClient::_buildTopic(const char* suffix) {

@@ -187,6 +187,7 @@ async function scenario(profile){
  const elements=new Map(),posts=[];let finishPost;
  const element=id=>{
   if(!elements.has(id))elements.set(id,{value:'',disabled:false,textContent:'',
+   setAttribute:()=>{},
    addEventListener:(event,callback)=>{element(id)[event]=callback;}});
   return elements.get(id);
  };
@@ -195,7 +196,8 @@ async function scenario(profile){
   mode:202,requested_party_mode:false,requested_economy_mode:false,pending_commands:0,
   crc_errors:0,malformed_frames:0,unknown_commands:0,outside_temperature:null,
   heating_enabled:null,datasets:[]};
- const context={document:{getElementById:element,activeElement:null},setTimeout:()=>1,
+ const context={document:{getElementById:element,activeElement:null,
+  documentElement:{dataset:{}}},setTimeout:()=>1,
   fetch:async(path,options={})=>{
    assert.equal(path,'api/remote');
    if(options.method==='POST'){

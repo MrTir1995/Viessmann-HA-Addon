@@ -533,7 +533,7 @@ char* generateDataJSON() {
 
     JSON_APPEND("\"serialConnected\":%s,", serialConnected ? "true" : "false");
     JSON_APPEND("\"compatible\":%s,", deviceCompatible ? "true" : "false");
-    JSON_APPEND("\"serialPort\":\"%s\",", activeSerialPort.empty() ? "" : activeSerialPort.c_str());
+    JSON_APPEND("\"serialPort\":%s,", jsonQuote(activeSerialPort).c_str());
     const bool dataReady = config.protocol == PROTOCOL_KM_REMOTE
                                ? (serialConnected && vitotrol && vitotrol->isOnline())
                                : (decoder && serialConnected && deviceCompatible && decoder->isReady());
@@ -997,7 +997,7 @@ bool validAdapterConfig(const JsonFields& fields, Config& options, std::string& 
     if (protocol != "vbus" && protocol != "kw" && protocol != "p300" &&
         protocol != "km" && protocol != "km_remote") return false;
     // Match the baud rates actually supported by LinuxSerial.
-    if (baud != 1200 && baud != 4800 && baud != 9600 && baud != 19200 &&
+    if (baud != 1200 && baud != 2400 && baud != 4800 && baud != 9600 && baud != 19200 &&
         baud != 38400 && baud != 57600 && baud != 115200) return false;
     if (serial != "8N1" && serial != "8E1" && serial != "8E2") return false;
     if ((model != "vitotrol200" && model != "vitotrol300") || slot < 1 || slot > 3)
@@ -1214,6 +1214,27 @@ bool saveSettings(const std::string& protocol, unsigned long baudRate,
     return atomicWrite("ui_settings.json", body);
 }
 
+void loadPrimarySettings(Config& options) {
+    const std::string path = dataDirectory() + "/ui_settings.json";
+    FILE* file = fopen(path.c_str(), "r");
+    if (!file) return;
+    char body[1025];
+    const size_t length = fread(body, 1, sizeof(body), file);
+    const bool failed = ferror(file);
+    fclose(file);
+    JsonFields fields;
+    Config saved = options;
+    std::string port = options.serialPort, name = "primary";
+    if (failed || length > 1024 ||
+        !parseConfigObject(std::string(body, length), fields) ||
+        fields.count("serial_port") || fields.count("name") ||
+        !validAdapterConfig(fields, saved, port, name, false)) {
+        fprintf(stderr, "Ignoring invalid primary UI settings\n");
+        return;
+    }
+    options = saved;
+}
+
 MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
                              size_t* uploadDataSize, const char* uploadData,
                              void** connectionContext) {
@@ -1284,46 +1305,19 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
         return queueJson(connection, MHD_HTTP_OK, "{\"status\":\"saved\",\"restart_required\":true}");
     }
 
-    std::string protocol;
-    std::string serialConfig;
-    std::string remoteModel;
-    float baudRateValue = 0;
-    float remoteSlotValue = 0;
-    bool invertSerial = false;
-    const int protocolField = parseJsonString(request->body, "protocol", protocol);
-    const int baudRateField = parseJsonNumber(request->body, "baud_rate", baudRateValue);
-    const int serialConfigField = parseJsonString(request->body, "serial_config", serialConfig);
-    const int remoteModelField = parseJsonString(request->body, "remote_model", remoteModel);
-    const int remoteSlotField = parseJsonNumber(request->body, "remote_slot", remoteSlotValue);
-    const int invertSerialField = parseJsonBool(request->body, "invert_serial", invertSerial);
-
-    const bool validProtocol =
-        protocol == "vbus" || protocol == "kw" || protocol == "p300" ||
-        protocol == "km" || protocol == "km_remote";
-    const bool validBaudRate =
-        baudRateValue == 1200 || baudRateValue == 2400 || baudRateValue == 4800 ||
-        baudRateValue == 9600 || baudRateValue == 19200 || baudRateValue == 38400 ||
-        baudRateValue == 115200;
-    const bool validSerialConfig =
-        serialConfig == "8N1" || serialConfig == "8E1" || serialConfig == "8E2";
-    const bool validRemoteModel = remoteModel == "vitotrol200" || remoteModel == "vitotrol300";
-    const bool validRemoteSlot = remoteSlotValue >= 1 && remoteSlotValue <= 3 &&
-                                 floorf(remoteSlotValue) == remoteSlotValue;
-    const bool valid =
-        protocolField == 1 && baudRateField == 1 && serialConfigField == 1 &&
-        remoteModelField == 1 && remoteSlotField == 1 && invertSerialField == 1 &&
-        validProtocol && validBaudRate && validSerialConfig && validRemoteModel &&
-        validRemoteSlot;
+    JsonFields fields;
+    Config options = currentAdapter().options;
+    std::string port = currentAdapter().port, name = currentAdapter().name;
+    const bool valid = parseConfigObject(request->body, fields) &&
+                       !fields.count("serial_port") && !fields.count("name") &&
+                       validAdapterConfig(fields, options, port, name, false);
 
     bool saved = false;
     if (valid) {
-        if (protocol == "km_remote") {
-            baudRateValue = 1200;
-            serialConfig = "8E1";
-        }
-        saved = saveSettings(protocol, static_cast<unsigned long>(baudRateValue),
-                             serialConfig, remoteModel,
-                             static_cast<unsigned int>(remoteSlotValue), invertSerial);
+        saved = saveSettings(protocolToken(options.protocol), options.baudRate,
+                             serialToken(options.serialConfig),
+                             options.remoteModelId == 0x38 ? "vitotrol300" : "vitotrol200",
+                             options.remoteSlot, options.invertSerial);
     }
 
     delete request;
@@ -1617,10 +1611,15 @@ const char* getDashboardHTML() {
     "container.innerHTML='<div class=\"empty-state\"><div class=\"empty-state-icon\">🔌</div><div style=\"font-size:18px;margin-bottom:8px;\">Serial port not connected</div><div style=\"color:var(--secondary-text);\">Please connect your Viessmann device and check the serial port configuration.</div></div>';"
     "return;"
     "}"
-    "statusDot.className='status-indicator '+(d.status==='OK'?'ok':'error');"
+    "statusDot.className='status-indicator '+((d.protocol===4?d.ready:d.status==='OK')?'ok':'error');"
     "statusText.textContent=d.status;"
     "const protocols=['VBUS','KW-Bus','P300','KM-Bus','KM-Bus Slave'];"
     "protocolText.textContent=protocols[d.protocol]||'Unknown';"
+    "if(d.protocol===4){"
+    "container.replaceChildren();const state=document.createElement('div');state.className='empty-state';"
+    "state.textContent=d.ready?'Vitotrol emulator online. Open Vitotrol-Steuerung for controls and bus data.':'Waiting for KM-Bus master...';"
+    "container.appendChild(state);return;"
+    "}"
     "if(!d.ready||(!d.temperatures.length&&!d.pumps.length&&!d.relays.length)){"
     "container.innerHTML='<div class=\"empty-state\"><div class=\"empty-state-icon\">⏳</div><div>Waiting for data...</div></div>';"
     "return;"
@@ -1831,9 +1830,9 @@ const char* getStatusHTML() {
 std::string getSettingsHTML() {
     const auto& config = currentAdapter().options;
     const bool primary = currentAdapter().id == "primary";
-    const char* additionalBaudOption = primary ?
+    const std::string additionalBaudOption = std::string(
         (config.baudRate == 2400 ? "<option value='2400' selected>2400</option>" :
-                                  "<option value='2400'>2400</option>") :
+                                  "<option value='2400'>2400</option>")) +
         (config.baudRate == 57600 ? "<option value='57600' selected>57600</option>" :
                                    "<option value='57600'>57600</option>");
     static thread_local char html[16384];
@@ -1983,7 +1982,7 @@ std::string getSettingsHTML() {
     config.serialPort,
     primary ? " readonly" : "",
     config.baudRate == 1200 ? " selected" : "",
-    additionalBaudOption,
+    additionalBaudOption.c_str(),
     config.baudRate == 4800 ? " selected" : "",
     config.baudRate == 9600 ? " selected" : "",
     config.baudRate == 19200 ? " selected" : "",
@@ -2412,6 +2411,7 @@ static MHD_Result handle_request(void *cls,
         response = MHD_create_response_from_buffer(strlen(html), (void*)html, MHD_RESPMEM_PERSISTENT);
         if (!response) return MHD_NO;
         MHD_add_response_header(response, "Content-Type", "text/html; charset=utf-8");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
         return ret;
@@ -2425,6 +2425,7 @@ static MHD_Result handle_request(void *cls,
                                                    (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
         return ret;
@@ -2445,6 +2446,7 @@ static MHD_Result handle_request(void *cls,
                                                    (void*)html,
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
         return ret;
@@ -2456,6 +2458,7 @@ static MHD_Result handle_request(void *cls,
                                                    (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
         return ret;
@@ -2467,6 +2470,7 @@ static MHD_Result handle_request(void *cls,
                                                    (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
         return ret;
@@ -2632,6 +2636,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    loadPrimarySettings(config);
     if (config.protocol == PROTOCOL_KM_REMOTE) {
         config.baudRate = 1200;
         config.serialConfig = SERIAL_8E1;

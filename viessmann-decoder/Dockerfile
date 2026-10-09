@@ -6,7 +6,7 @@ LABEL \
     io.hass.name="Viessmann Decoder" \
     io.hass.description="Viessmann VBUS/KW/P300/KM-Bus protocol decoder" \
     io.hass.type="addon" \
-    io.hass.version="2.3.0"
+    io.hass.version="2.3.1"
 
 # CRITICAL: Disable s6-overlay - HA Supervisor uses tini as PID 1
 # Setting S6_CMD_WAIT_FOR_SERVICES=0 and using direct CMD execution
@@ -37,6 +37,7 @@ WORKDIR /build
 COPY linux/src /build/src/
 COPY linux/include /build/include/
 COPY src /build/library_src/
+COPY src/vbusdecoder.h /build/include/vbusdecoder.h
 COPY webserver /build/webserver/
 
 # Validate source files exist

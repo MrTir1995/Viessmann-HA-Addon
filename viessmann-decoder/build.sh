@@ -26,19 +26,19 @@ echo "Building for architecture: ${ARCH}"
 # Get base image
 case "${ARCH}" in
     amd64)
-        BUILD_FROM="ghcr.io/home-assistant/amd64-base:3.18"
+        PLATFORM="linux/amd64"
         ;;
     aarch64)
-        BUILD_FROM="ghcr.io/home-assistant/aarch64-base:3.18"
+        PLATFORM="linux/arm64"
         ;;
     armv7)
-        BUILD_FROM="ghcr.io/home-assistant/armv7-base:3.18"
+        PLATFORM="linux/arm/v7"
         ;;
     armhf)
-        BUILD_FROM="ghcr.io/home-assistant/armhf-base:3.18"
+        PLATFORM="linux/arm/v6"
         ;;
     i386)
-        BUILD_FROM="ghcr.io/home-assistant/i386-base:3.18"
+        PLATFORM="linux/386"
         ;;
     *)
         echo -e "${RED}Unknown architecture: ${ARCH}${NC}"
@@ -46,6 +46,7 @@ case "${ARCH}" in
         exit 1
         ;;
 esac
+BUILD_FROM="alpine:3.19"
 
 echo "Base image: ${BUILD_FROM}"
 echo ""
@@ -53,10 +54,11 @@ echo ""
 # Build the image
 echo "Building Docker image..."
 docker build \
+    --platform "${PLATFORM}" \
     --build-arg BUILD_FROM="${BUILD_FROM}" \
     -t viessmann-decoder:${ARCH} \
     -f viessmann-decoder/Dockerfile \
-    . || {
+    viessmann-decoder || {
         echo -e "${RED}Build failed!${NC}"
         exit 1
     }

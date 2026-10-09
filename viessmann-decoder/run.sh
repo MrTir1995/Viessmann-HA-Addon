@@ -10,7 +10,7 @@ log_warning() { echo "[WARNING] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
 log_info "======================================"
-log_info " Viessmann Decoder Add-on v2.2.1"
+log_info " Viessmann Decoder Add-on / Standalone v2.3.1"
 log_info "======================================"
 
 # Read configuration from options.json
@@ -60,7 +60,7 @@ case "${PROTOCOL}" in
     *) log_error "Invalid PROTOCOL: ${PROTOCOL}"; exit 1 ;;
 esac
 case "${BAUD_RATE}" in
-    1200|2400|4800|9600|19200|38400|115200) ;;
+    1200|2400|4800|9600|19200|38400|57600|115200) ;;
     *) log_error "Invalid BAUD_RATE: ${BAUD_RATE}"; exit 1 ;;
 esac
 case "${SERIAL_CONFIG}" in

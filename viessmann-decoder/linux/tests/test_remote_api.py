@@ -169,6 +169,27 @@ class RemoteApiTests(unittest.TestCase):
         self.exchange(telegram(0xBF, bytes([0x19, 0xAA, 0xAA]), destination=0xFF, slot=0),
                       expect_reply=False)
 
+    def test_party_payload_uses_effective_profile(self):
+        self.exchange(telegram(0))
+        self.assertEqual(self.post({"mode": "party_on", "party_room_temperature": 22})[0], 200)
+        self.assertEqual(self.exchange(telegram(0))[6:15],
+                         bytes([0x14]) + bytes(value ^ 0xAA for value in [0, 1, 0xCF, 22, 0, 0, 0, 0]))
+        before = self.state()
+        self.assertEqual(self.post({
+            "profile": "openv", "mode": "party_on", "party_room_temperature": 24,
+        })[0], 503)
+        after = self.state()
+        for key in ["profile", "party_room_temperature", "pending_commands"]:
+            self.assertEqual(before[key], after[key])
+        self.assertEqual(self.post({"profile": "openv", "mode": "party_on"})[0], 200)
+        self.assertEqual(self.exchange(telegram(0))[6:15],
+                         bytes([0x14]) + bytes(value ^ 0xAA for value in [0, 1, 0xCB, 0, 0, 0, 0, 0]))
+        self.assertEqual(self.post({
+            "profile": "wifi", "mode": "party_on", "party_room_temperature": 24,
+        })[0], 200)
+        self.assertEqual(self.exchange(telegram(0))[6:15],
+                         bytes([0x14]) + bytes(value ^ 0xAA for value in [0, 1, 0xCF, 24, 0, 0, 0, 0]))
+
     def test_ui_and_existing_routes(self):
         dashboard = self.request("/")[1]
         self.assertIn(b"remoteControls", dashboard)

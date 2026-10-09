@@ -111,7 +111,8 @@ void sourceFixturesAndInitialTemperature() {
     CHECK(device.getPartyRoomTemperature() == 20);
     CHECK(device.setOperatingMode("party_on"));
     const Bytes requestedParty = exchange(device, stream, 0);
-    CHECK(requestedParty == reply(0xBF, dataset(0x14, {0,1,0xCB,20,0,0,0,0})));
+    CHECK(requestedParty == reply(0xBF, dataset(0x14, {0,1,0xCF,20,0,0,0,0})));
+    CHECK(requestedParty[9] == sourceParty[9]);
     CHECK(requestedParty[10] == sourceParty[10]);
 }
 
@@ -362,12 +363,12 @@ void allModeCommandsAndIndependentFlags() {
     exchange(device, stream, 0);
     const char* names[] = {"off","water","heat_water","party_on","party_off",
                            "economy_on","economy_off"};
-    const uint8_t commands[] = {0xC8,0xC9,0xCA,0xCB,0xCC,0xDC,0xDD};
+    const uint8_t commands[] = {0xC8,0xC9,0xCA,0xCF,0xCC,0xDC,0xDD};
     for (unsigned i = 0; i < 7; ++i) {
         CHECK(device.setOperatingMode(names[i]));
         CHECK(exchange(device, stream, 0) ==
               reply(0xBF, dataset(0x14,
-                  {0,1,commands[i],uint8_t(commands[i] == 0xCB ? 20 : 0),0,0,0,0})));
+                  {0,1,commands[i],uint8_t(commands[i] == 0xCF ? 20 : 0),0,0,0,0})));
         CHECK(device.getOperatingMode() == (i < 3 ? commands[i] : 0xCA));
         if (i == 3) CHECK(device.getPartyEnabled());
         if (i == 4) CHECK(!device.getPartyEnabled());
@@ -408,10 +409,29 @@ void partyTemperatureIsAtomicAndPartOfModeCommand() {
     CHECK(device.getOperatingMode() == 0xCA && device.getPendingCommandCount() == 2);
     CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x20, {200,0,0})));
     CHECK(exchange(device, stream, 0) ==
-          reply(0xBF, dataset(0x14, {0,1,0xCB,22,0,0,0,0})));
+          reply(0xBF, dataset(0x14, {0,1,0xCF,22,0,0,0,0})));
     CHECK(device.setOperatingMode("party_on"));
     CHECK(exchange(device, stream, 0) ==
-          reply(0xBF, dataset(0x14, {0,1,0xCB,22,0,0,0,0})));
+          reply(0xBF, dataset(0x14, {0,1,0xCF,22,0,0,0,0})));
+    update.hasProfile = true; update.profile = "openv";
+    CHECK(!device.applyControlUpdate(update));
+    CHECK(std::string(device.getProtocolProfile()) == "wifi");
+    CHECK(device.getPartyRoomTemperature() == 22);
+    CHECK(device.getPendingCommandCount() == 0);
+    profile(device, "openv");
+    CHECK(!device.applyControlUpdate(update));
+    CHECK(device.setOperatingMode("party_on"));
+    CHECK(exchange(device, stream, 0) ==
+          reply(0xBF, dataset(0x14, {0,1,0xCB,0,0,0,0,0})));
+    update.profile = "wifi";
+    CHECK(device.applyControlUpdate(update));
+    profile(device, "openv");
+    CHECK(exchange(device, stream, 0) ==
+          reply(0xBF, dataset(0x14, {0,1,0xCB,0,0,0,0,0})));
+    CHECK(device.setOperatingMode("party_on"));
+    profile(device, "wifi");
+    CHECK(exchange(device, stream, 0) ==
+          reply(0xBF, dataset(0x14, {0,1,0xCF,22,0,0,0,0})));
 
     FakeStream fullStream; KMBusVitotrol full(&fullStream, 0x38, 1);
     CHECK(full.setOperatingMode("off"));

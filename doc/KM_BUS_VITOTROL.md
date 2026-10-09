@@ -75,6 +75,10 @@ capture of the target controller. Profile changes migrate waiting temperature
 commands; they do not persist across restart or serial reconnection.
 Changing profile during a partly transmitted queued telegram is rejected
 atomically; retry after the transport has completed or abandoned that response.
+Queued party-on commands are encoded using the profile active at transmission:
+`wifi` sends `0xCF` with the requested temperature, while `openv` sends `0xCB`
+without a temperature payload. Migration never sends a WiFi-specific temperature
+payload with the OpenV command.
 Both profiles handle a short `0x3F` dataset read, returning only an available
 locally generated dataset. They never echo master status data back as a remote
 response. Unknown datasets/commands are not answered with fabricated data.

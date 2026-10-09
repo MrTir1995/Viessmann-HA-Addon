@@ -85,7 +85,7 @@ bool KMBusVitotrol::applyControlUpdate(const ControlUpdate& update) {
           truncf(update.partyRoomTemperature) != update.partyRoomTemperature ||
           !update.hasMode)) ||
         (update.hasMode && !modeCommand(update.mode, command))) return false;
-    if (update.hasPartyRoomTemperature && command != 0xCB) return false;
+    if (update.hasPartyRoomTemperature && (command != 0xCB || openv)) return false;
     const unsigned needed = unsigned(update.hasRoomTemperature) +
         unsigned(update.hasDesiredRoomTemperature) +
         unsigned(update.hasReducedRoomTemperature) + unsigned(update.hasMode);
@@ -353,6 +353,11 @@ bool KMBusVitotrol::sendDataset(const QueuedDataset& item, bool queued) {
     uint8_t data[MAX_DATASET_DATA + 1];
     data[0] = item.id;
     for (uint8_t i = 0; i < item.length; ++i) data[i + 1] = item.data[i] ^ XOR_MASK;
+    // Keep queued party intent profile-neutral until the master grants transmission.
+    if (item.kind == MODE && item.length == 8 && item.data[2] == 0xCB) {
+        data[3] = (_openv ? 0xCB : 0xCF) ^ XOR_MASK;
+        data[4] = (_openv ? 0 : item.data[3]) ^ XOR_MASK;
+    }
     return sendFrame(0xBF, data, item.length + 1, queued);
 }
 bool KMBusVitotrol::sendQueuedDataset() {

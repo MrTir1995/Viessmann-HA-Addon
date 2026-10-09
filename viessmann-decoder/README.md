@@ -234,6 +234,9 @@ Party- und Sparbetrieb vorgeben. Im Profil **WiFiVitotrol** ist beim Einschalten
 des Partybetriebs dessen Solltemperatur wählbar (`0xCF`, standardmäßig 20 °C).
 **OpenV** verwendet dagegen `0xCB` zum Einschalten ohne Temperaturvorgabe;
 eine explizite Partytemperatur wird in diesem Profil atomar abgelehnt.
+Bei einem Profilwechsel werden noch wartende Partybefehle erst beim Senden
+passend zum aktiven Profil kodiert. Im OpenV-Profil wird dabei keine
+WiFiVitotrol-spezifische Temperatur-Nutzlast übertragen.
 Steuerwerte sind lokale Vorgaben, keine Bestätigung durch die Regelung:
 vor Verwendung an der konkreten Regelung prüfen.
 Mehrere API-Vorgaben werden atomar übernommen;

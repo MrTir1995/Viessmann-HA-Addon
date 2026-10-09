@@ -1,5 +1,5 @@
 #!/bin/bash
-# Viessmann Decoder Add-on Startup Script
+# Viessmann Decoder Add-on and standalone container startup script
 # Direct execution under tini (no s6-overlay, no bashio dependency)
 
 set -e
@@ -18,9 +18,11 @@ CONFIG_FILE="/data/options.json"
 
 if [[ -f "${CONFIG_FILE}" ]]; then
     SERIAL_PORT=$(jq -r '.serial_port // "/dev/ttyUSB0"' "${CONFIG_FILE}")
-    BAUD_RATE=$(jq -r '.baud_rate // 9600' "${CONFIG_FILE}")
-    PROTOCOL=$(jq -r '.protocol // "vbus"' "${CONFIG_FILE}")
-    SERIAL_CONFIG=$(jq -r '.serial_config // "8N1"' "${CONFIG_FILE}")
+    BAUD_RATE=$(jq -r '.baud_rate // 1200' "${CONFIG_FILE}")
+    PROTOCOL=$(jq -r '.protocol // "km_remote"' "${CONFIG_FILE}")
+    SERIAL_CONFIG=$(jq -r '.serial_config // "8E1"' "${CONFIG_FILE}")
+    REMOTE_MODEL=$(jq -r '.remote_model // "vitotrol300"' "${CONFIG_FILE}")
+    REMOTE_SLOT=$(jq -r '.remote_slot // 1' "${CONFIG_FILE}")
     INVERT_SERIAL=$(jq -r '.invert_serial // false' "${CONFIG_FILE}")
     LOG_LEVEL=$(jq -r '.log_level // "info"' "${CONFIG_FILE}")
     USBIP_ENABLE=$(jq -r '.usbip_enable // false' "${CONFIG_FILE}")
@@ -28,24 +30,62 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     USBIP_BUSID=$(jq -r '.usbip_busid // ""' "${CONFIG_FILE}")
     USBIP_PORT=$(jq -r '.usbip_port // 3240' "${CONFIG_FILE}")
 else
-    log_warning "Config file not found, using defaults"
-    SERIAL_PORT="/dev/ttyUSB0"
-    BAUD_RATE="9600"
-    PROTOCOL="vbus"
-    SERIAL_CONFIG="8N1"
-    INVERT_SERIAL="false"
-    LOG_LEVEL="info"
+    log_info "No options.json found, using standalone environment configuration"
+    SERIAL_PORT="${SERIAL_PORT:-/dev/ttyUSB0}"
+    BAUD_RATE="${BAUD_RATE:-1200}"
+    PROTOCOL="${PROTOCOL:-km_remote}"
+    SERIAL_CONFIG="${SERIAL_CONFIG:-8E1}"
+    REMOTE_MODEL="${REMOTE_MODEL:-vitotrol300}"
+    REMOTE_SLOT="${REMOTE_SLOT:-1}"
+    INVERT_SERIAL="${INVERT_SERIAL:-false}"
+    LOG_LEVEL="${LOG_LEVEL:-info}"
     USBIP_ENABLE="false"
     USBIP_HOST=""
     USBIP_BUSID=""
     USBIP_PORT="3240"
 fi
 
+UI_SETTINGS_FILE="/data/ui_settings.json"
+if [[ -f "${UI_SETTINGS_FILE}" ]]; then
+    BAUD_RATE=$(jq -r --arg default "${BAUD_RATE}" '.baud_rate // $default' "${UI_SETTINGS_FILE}")
+    PROTOCOL=$(jq -r --arg default "${PROTOCOL}" '.protocol // $default' "${UI_SETTINGS_FILE}")
+    SERIAL_CONFIG=$(jq -r --arg default "${SERIAL_CONFIG}" '.serial_config // $default' "${UI_SETTINGS_FILE}")
+    REMOTE_MODEL=$(jq -r --arg default "${REMOTE_MODEL}" '.remote_model // $default' "${UI_SETTINGS_FILE}")
+    REMOTE_SLOT=$(jq -r --arg default "${REMOTE_SLOT}" '.remote_slot // $default' "${UI_SETTINGS_FILE}")
+    INVERT_SERIAL=$(jq -r --arg default "${INVERT_SERIAL}" 'if (.invert_serial | type) == "boolean" then .invert_serial else ($default == "true") end' "${UI_SETTINGS_FILE}")
+fi
+
+case "${PROTOCOL}" in
+    vbus|kw|p300|km|km_remote) ;;
+    *) log_error "Invalid PROTOCOL: ${PROTOCOL}"; exit 1 ;;
+esac
+case "${BAUD_RATE}" in
+    1200|2400|4800|9600|19200|38400|115200) ;;
+    *) log_error "Invalid BAUD_RATE: ${BAUD_RATE}"; exit 1 ;;
+esac
+case "${SERIAL_CONFIG}" in
+    8N1|8E1|8E2) ;;
+    *) log_error "Invalid SERIAL_CONFIG: ${SERIAL_CONFIG}"; exit 1 ;;
+esac
+case "${REMOTE_MODEL}" in
+    vitotrol200|vitotrol300) ;;
+    *) log_error "Invalid REMOTE_MODEL: ${REMOTE_MODEL}"; exit 1 ;;
+esac
+case "${REMOTE_SLOT}" in
+    1|2|3) ;;
+    *) log_error "Invalid REMOTE_SLOT: ${REMOTE_SLOT}"; exit 1 ;;
+esac
+case "${INVERT_SERIAL}" in
+    true|false) ;;
+    *) log_error "Invalid INVERT_SERIAL: ${INVERT_SERIAL}"; exit 1 ;;
+esac
+
 log_info "Configuration:"
 log_info "  Serial Port: ${SERIAL_PORT}"
 log_info "  Baud Rate: ${BAUD_RATE}"
 log_info "  Protocol: ${PROTOCOL}"
 log_info "  Serial Config: ${SERIAL_CONFIG}"
+log_info "  Remote Model: ${REMOTE_MODEL} (slot ${REMOTE_SLOT})"
 log_info "  Invert Serial: ${INVERT_SERIAL}"
 log_info "  Log Level: ${LOG_LEVEL}"
 log_info "  USB/IP Enabled: ${USBIP_ENABLE}"
@@ -104,5 +144,7 @@ exec /usr/local/bin/viessmann_webserver \
     -b "${BAUD_RATE}" \
     -t "${PROTOCOL}" \
     -c "${SERIAL_CONFIG}" \
+    -m "${REMOTE_MODEL}" \
+    -s "${REMOTE_SLOT}" \
     -i "${INVERT_SERIAL}" \
     -w 8099

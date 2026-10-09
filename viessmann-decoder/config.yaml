@@ -1,7 +1,7 @@
 name: Viessmann Decoder
-version: 2.2.1
+version: 2.3.0
 slug: viessmann-decoder
-description: Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, and KM-Bus protocols
+description: Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, KM-Bus, and Vitotrol emulation
 arch:
   - armhf
   - armv7
@@ -38,9 +38,11 @@ stage: stable
 image: docker.io/mrtir071/viessmann-decoder-{arch}
 options:
   serial_port: /dev/ttyUSB0
-  baud_rate: 9600
-  protocol: vbus
-  serial_config: 8N1
+  baud_rate: 1200
+  protocol: km_remote
+  serial_config: 8E1
+  remote_model: vitotrol300
+  remote_slot: 1
   invert_serial: false
   log_level: info
   usbip_enable: false
@@ -49,9 +51,11 @@ options:
   usbip_port: 3240
 schema:
   serial_port: str
-  baud_rate: list(2400|4800|9600|19200|38400|115200)
-  protocol: list(vbus|kw|p300|km)
-  serial_config: list(8N1|8E2)
+  baud_rate: list(1200|2400|4800|9600|19200|38400|115200)
+  protocol: list(vbus|kw|p300|km|km_remote)
+  serial_config: list(8N1|8E1|8E2)
+  remote_model: list(vitotrol200|vitotrol300)
+  remote_slot: list(1|2|3)
   invert_serial: bool?
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   usbip_enable: bool

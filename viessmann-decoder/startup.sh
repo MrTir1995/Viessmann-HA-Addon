@@ -101,12 +101,15 @@ main() {
     BAUD_RATE=$(bashio::config 'baud_rate')
     PROTOCOL=$(bashio::config 'protocol')
     SERIAL_CONFIG=$(bashio::config 'serial_config')
+    REMOTE_MODEL=$(bashio::config 'remote_model')
+    REMOTE_SLOT=$(bashio::config 'remote_slot')
     
     bashio::log.info "Configuration:"
     bashio::log.info "  Serial Port: ${SERIAL_PORT}"
     bashio::log.info "  Baud Rate: ${BAUD_RATE}"
     bashio::log.info "  Protocol: ${PROTOCOL}"
     bashio::log.info "  Serial Config: ${SERIAL_CONFIG}"
+    bashio::log.info "  Remote: ${REMOTE_MODEL}, slot ${REMOTE_SLOT}"
     
     # Check serial port availability (informational)
     if bashio::fs.file_exists "${SERIAL_PORT}"; then
@@ -142,6 +145,8 @@ main() {
         -b "${BAUD_RATE}" \
         -t "${PROTOCOL}" \
         -c "${SERIAL_CONFIG}" \
+        -m "${REMOTE_MODEL}" \
+        -s "${REMOTE_SLOT}" \
         -w 8099
 }
 

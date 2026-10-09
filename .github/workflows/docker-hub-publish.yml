@@ -9,10 +9,44 @@ on:
         description: 'Version tag (z.B. 2.1.5)'
         required: true
         type: string
+      create_release:
+        description: 'GitHub-Release nach erfolgreichem Docker-Build veröffentlichen'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
+  prepare:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Validate version and image labels
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${REQUESTED_VERSION:-${GITHUB_REF#refs/tags/}}"
+          VERSION="${VERSION#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && ${#VERSION} -le 128 ]] || exit 1
+          CONFIG_VERSION=$(awk '/^version:/ {print $2}' viessmann-decoder/config.yaml)
+          BUILD_VERSION=$(jq -r '.labels["io.hass.version"]' viessmann-decoder/build.json)
+          DOCKER_VERSION=$(sed -n 's/.*io.hass.version="\([^"]*\)".*/\1/p' viessmann-decoder/Dockerfile)
+          [[ "$VERSION" == "$CONFIG_VERSION" && "$VERSION" == "$BUILD_VERSION" && "$VERSION" == "$DOCKER_VERSION" ]] || {
+            echo "::error::Release version does not match add-on metadata"
+            exit 1
+          }
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
   publish-dockerhub:
     name: Publish to Docker Hub
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -48,23 +82,6 @@ jobs:
           username: mrtir071
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get version
-        id: version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-            VERSION="${VERSION#v}"
-          fi
-          if [[ ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-            echo "::error::Invalid Docker version tag"
-            exit 1
-          fi
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Build and push ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
@@ -73,14 +90,14 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            mrtir071/viessmann-decoder-${{ matrix.arch }}:${{ steps.version.outputs.VERSION }}
+            mrtir071/viessmann-decoder-${{ matrix.arch }}:${{ needs.prepare.outputs.version }}
             mrtir071/viessmann-decoder-${{ matrix.arch }}:latest
           build-args: |
             BUILD_FROM=docker.io/library/alpine:3.19
 
   create-manifest:
     name: Create multi-arch manifest
-    needs: publish-dockerhub
+    needs: [prepare, publish-dockerhub]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
@@ -92,26 +109,9 @@ jobs:
           username: mrtir071
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get version
-        id: version
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-            VERSION="${VERSION#v}"
-          fi
-          if [[ ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-            echo "::error::Invalid Docker version tag"
-            exit 1
-          fi
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Create and push manifest
         env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           # Erstelle Manifest für spezifische Version
           docker buildx imagetools create -t mrtir071/viessmann-decoder:${VERSION} \
@@ -120,7 +120,7 @@ jobs:
             mrtir071/viessmann-decoder-armhf:${VERSION} \
             mrtir071/viessmann-decoder-armv7:${VERSION} \
             mrtir071/viessmann-decoder-i386:${VERSION}
-          
+
           # Erstelle "latest" Manifest
           docker buildx imagetools create -t mrtir071/viessmann-decoder:latest \
             mrtir071/viessmann-decoder-amd64:${VERSION} \
@@ -128,3 +128,29 @@ jobs:
             mrtir071/viessmann-decoder-armhf:${VERSION} \
             mrtir071/viessmann-decoder-armv7:${VERSION} \
             mrtir071/viessmann-decoder-i386:${VERSION}
+
+  create-release:
+    name: Publish GitHub release
+    if: github.event_name == 'workflow_dispatch' && inputs.create_release
+    needs: [prepare, create-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Publish release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          awk -v heading="## [$VERSION] -" '
+            index($0, heading) == 1 {found = 1; next}
+            found && /^## / {exit}
+            found {print}
+          ' viessmann-decoder/CHANGELOG.md > /tmp/release-notes.md
+          test -s /tmp/release-notes.md
+          gh release create "$VERSION" --target "$GITHUB_SHA" \
+            --title "Version $VERSION" --notes-file /tmp/release-notes.md

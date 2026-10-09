@@ -37,9 +37,9 @@ constexpr uint8_t PROTOCOL_KM_REMOTE = 4;
 
 // Configuration structure
 struct Config {
-    uint8_t protocol;      // 0=VBUS, 1=KW, 2=P300, 3=KM
+    uint8_t protocol;      // 0=VBUS, 1=KW, 2=P300, 3=KM, 4=KM-Bus remote
     unsigned long baudRate;
-    uint8_t serialConfig;  // SERIAL_8N1 or SERIAL_8E2
+    uint8_t serialConfig;  // SERIAL_8N1, SERIAL_8E1, or SERIAL_8E2
     bool invertSerial;     // Invert RX/TX signals for M-Bus adapters
     const char* serialPort;
     uint16_t webPort;

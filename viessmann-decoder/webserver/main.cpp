@@ -18,6 +18,7 @@
 #include <getopt.h>
 #include <microhttpd.h>
 #include <pthread.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <glob.h>
 #include <vector>
@@ -373,6 +374,151 @@ MHD_Result queueJson(MHD_Connection* connection, unsigned int status, const char
     const MHD_Result result = MHD_queue_response(connection, status, response);
     MHD_destroy_response(response);
     return result;
+}
+
+struct SettingsPostData {
+    std::string body;
+};
+
+int parseJsonBool(const std::string& body, const char* key, bool& value) {
+    const std::string field = std::string("\"") + key + "\"";
+    const size_t keyPosition = body.find(field);
+    if (keyPosition == std::string::npos) return 0;
+    const size_t colon = body.find(':', keyPosition + field.length());
+    if (colon == std::string::npos) return -1;
+
+    size_t position = colon + 1;
+    while (position < body.size() &&
+           (body[position] == ' ' || body[position] == '\t' ||
+            body[position] == '\n' || body[position] == '\r')) {
+        ++position;
+    }
+    if (body.compare(position, 4, "true") == 0) {
+        position += 4;
+        value = true;
+    } else if (body.compare(position, 5, "false") == 0) {
+        position += 5;
+        value = false;
+    } else {
+        return -1;
+    }
+    while (position < body.size() &&
+           (body[position] == ' ' || body[position] == '\t' ||
+            body[position] == '\n' || body[position] == '\r')) {
+        ++position;
+    }
+    return position == body.size() || body[position] == ',' || body[position] == '}' ? 1 : -1;
+}
+
+bool saveSettings(const std::string& protocol, unsigned long baudRate,
+                  const std::string& serialConfig, const std::string& remoteModel,
+                  unsigned int remoteSlot, bool invertSerial) {
+    char temporaryPath[] = "/data/ui_settings.json.XXXXXX";
+    const int descriptor = mkstemp(temporaryPath);
+    if (descriptor < 0) return false;
+
+    FILE* file = fdopen(descriptor, "w");
+    if (!file) {
+        close(descriptor);
+        unlink(temporaryPath);
+        return false;
+    }
+    const bool written =
+        fprintf(file,
+                "{\"baud_rate\":%lu,\"protocol\":\"%s\",\"serial_config\":\"%s\","
+                "\"remote_model\":\"%s\",\"remote_slot\":%u,\"invert_serial\":%s}\n",
+                baudRate, protocol.c_str(), serialConfig.c_str(), remoteModel.c_str(),
+                remoteSlot, invertSerial ? "true" : "false") >= 0;
+    const bool flushed = written && fflush(file) == 0 && fsync(fileno(file)) == 0;
+    const bool closed = fclose(file) == 0;
+    if (!flushed || !closed || rename(temporaryPath, "/data/ui_settings.json") != 0) {
+        unlink(temporaryPath);
+        return false;
+    }
+    return true;
+}
+
+MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
+                             size_t* uploadDataSize, const char* uploadData,
+                             void** connectionContext) {
+    if (strcmp(method, "POST") != 0) {
+        return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
+                         "{\"error\":\"Use POST\"}");
+    }
+
+    SettingsPostData* request = static_cast<SettingsPostData*>(*connectionContext);
+    if (!request) {
+        request = new SettingsPostData();
+        *connectionContext = request;
+        return MHD_YES;
+    }
+    if (*uploadDataSize > 0) {
+        if (request->body.size() + *uploadDataSize > 1024) {
+            delete request;
+            *connectionContext = nullptr;
+            *uploadDataSize = 0;
+            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                             "{\"error\":\"Request body too large\"}");
+        }
+        request->body.append(uploadData, *uploadDataSize);
+        *uploadDataSize = 0;
+        return MHD_YES;
+    }
+
+    std::string protocol;
+    std::string serialConfig;
+    std::string remoteModel;
+    float baudRateValue = 0;
+    float remoteSlotValue = 0;
+    bool invertSerial = false;
+    const int protocolField = parseJsonString(request->body, "protocol", protocol);
+    const int baudRateField = parseJsonNumber(request->body, "baud_rate", baudRateValue);
+    const int serialConfigField = parseJsonString(request->body, "serial_config", serialConfig);
+    const int remoteModelField = parseJsonString(request->body, "remote_model", remoteModel);
+    const int remoteSlotField = parseJsonNumber(request->body, "remote_slot", remoteSlotValue);
+    const int invertSerialField = parseJsonBool(request->body, "invert_serial", invertSerial);
+
+    const bool validProtocol =
+        protocol == "vbus" || protocol == "kw" || protocol == "p300" ||
+        protocol == "km" || protocol == "km_remote";
+    const bool validBaudRate =
+        baudRateValue == 1200 || baudRateValue == 2400 || baudRateValue == 4800 ||
+        baudRateValue == 9600 || baudRateValue == 19200 || baudRateValue == 38400 ||
+        baudRateValue == 115200;
+    const bool validSerialConfig =
+        serialConfig == "8N1" || serialConfig == "8E1" || serialConfig == "8E2";
+    const bool validRemoteModel = remoteModel == "vitotrol200" || remoteModel == "vitotrol300";
+    const bool validRemoteSlot = remoteSlotValue >= 1 && remoteSlotValue <= 3 &&
+                                 floorf(remoteSlotValue) == remoteSlotValue;
+    const bool valid =
+        protocolField == 1 && baudRateField == 1 && serialConfigField == 1 &&
+        remoteModelField == 1 && remoteSlotField == 1 && invertSerialField == 1 &&
+        validProtocol && validBaudRate && validSerialConfig && validRemoteModel &&
+        validRemoteSlot;
+
+    bool saved = false;
+    if (valid) {
+        if (protocol == "km_remote") {
+            baudRateValue = 1200;
+            serialConfig = "8E1";
+        }
+        saved = saveSettings(protocol, static_cast<unsigned long>(baudRateValue),
+                             serialConfig, remoteModel,
+                             static_cast<unsigned int>(remoteSlotValue), invertSerial);
+    }
+
+    delete request;
+    *connectionContext = nullptr;
+    if (!valid) {
+        return queueJson(connection, MHD_HTTP_BAD_REQUEST,
+                         "{\"error\":\"Invalid settings\"}");
+    }
+    if (!saved) {
+        return queueJson(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                         "{\"error\":\"Could not save settings\"}");
+    }
+    return queueJson(connection, MHD_HTTP_OK,
+                     "{\"status\":\"saved\",\"restart_required\":true}");
 }
 
 MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
@@ -783,14 +929,14 @@ const char* getSettingsHTML() {
     "<div class='view-container'>"
     "<div class='card'>"
     "<div class='card-header'><div class='card-title'>Connection Settings</div></div>"
-    "<form onsubmit='return false;'>"
+    "<form id='settingsForm' onsubmit='saveSettings(event)'>"
     "<div class='form-group'>"
     "<label class='form-label'>Serial Port</label>"
     "<input type='text' class='form-control' value='%s' readonly>"
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Baud Rate</label>"
-    "<select class='form-select'>"
+    "<select class='form-select' name='baud_rate'>"
     "<option value='1200'%s>1200</option>"
     "<option value='2400'%s>2400</option>"
     "<option value='4800'%s>4800</option>"
@@ -802,7 +948,7 @@ const char* getSettingsHTML() {
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Protocol</label>"
-    "<select class='form-select'>"
+    "<select class='form-select' id='protocol' name='protocol'>"
     "<option value='vbus'%s>VBUS (RESOL)</option>"
     "<option value='kw'%s>KW-Bus (VS1)</option>"
     "<option value='p300'%s>P300 (VS2/Optolink)</option>"
@@ -812,19 +958,57 @@ const char* getSettingsHTML() {
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Serial Configuration</label>"
-    "<select class='form-select'>"
+    "<select class='form-select' name='serial_config'>"
     "<option value='8N1'%s>8N1</option>"
     "<option value='8E1'%s>8E1</option>"
     "<option value='8E2'%s>8E2</option>"
     "</select>"
     "</div>"
+    "<div class='form-group'>"
+    "<label class='form-label'>Vitotrol Model</label>"
+    "<select class='form-select' name='remote_model'>"
+    "<option value='vitotrol200'%s>Vitotrol 200</option>"
+    "<option value='vitotrol300'%s>Vitotrol 300</option>"
+    "</select>"
+    "</div>"
+    "<div class='form-group'>"
+    "<label class='form-label'>Heating Circuit Slot</label>"
+    "<select class='form-select' name='remote_slot'>"
+    "<option value='1'%s>1</option>"
+    "<option value='2'%s>2</option>"
+    "<option value='3'%s>3</option>"
+    "</select>"
+    "</div>"
+    "<div class='form-group'>"
+    "<label class='form-label'><input type='checkbox' name='invert_serial'%s> Invert serial signals</label>"
+    "</div>"
+    "<div id='settingsMessage' class='form-group' role='status'>Changes require a container restart.</div>"
     "<div class='button-group'>"
     "<button class='btn btn-secondary' onclick='window.location.href=\"/\"'>Cancel</button>"
-    "<button class='btn btn-primary' onclick='alert(\"Settings are read-only in this version. Configure through Home Assistant addon settings.\")'>Save</button>"
+    "<button class='btn btn-primary' type='submit'>Save</button>"
     "</div>"
     "</form>"
     "</div>"
     "</div>"
+    "<script>"
+    "const settingsForm=document.getElementById('settingsForm');"
+    "const settingsMessage=document.getElementById('settingsMessage');"
+    "document.getElementById('protocol').addEventListener('change',event=>{"
+    "if(event.target.value==='km_remote'){settingsForm.elements.baud_rate.value='1200';"
+    "settingsForm.elements.serial_config.value='8E1';}});"
+    "async function saveSettings(event){event.preventDefault();"
+    "const values={baud_rate:Number(settingsForm.elements.baud_rate.value),"
+    "protocol:settingsForm.elements.protocol.value,"
+    "serial_config:settingsForm.elements.serial_config.value,"
+    "remote_model:settingsForm.elements.remote_model.value,"
+    "remote_slot:Number(settingsForm.elements.remote_slot.value),"
+    "invert_serial:settingsForm.elements.invert_serial.checked};"
+    "try{const response=await fetch('api/settings',{method:'POST',"
+    "headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});"
+    "const result=await response.json();if(!response.ok)throw new Error(result.error);"
+    "settingsMessage.textContent='Settings saved. Restart the container to apply them.';"
+    "}catch(error){settingsMessage.textContent='Could not save settings: '+error.message;}}"
+    "</script>"
     "</body></html>",
     config.serialPort,
     config.baudRate == 1200 ? " selected" : "",
@@ -841,7 +1025,13 @@ const char* getSettingsHTML() {
     config.protocol == PROTOCOL_KM_REMOTE ? " selected" : "",
     config.serialConfig == SERIAL_8N1 ? " selected" : "",
     config.serialConfig == SERIAL_8E1 ? " selected" : "",
-    config.serialConfig == SERIAL_8E2 ? " selected" : "");
+    config.serialConfig == SERIAL_8E2 ? " selected" : "",
+    config.remoteModelId == 0x34 ? " selected" : "",
+    config.remoteModelId == 0x38 ? " selected" : "",
+    config.remoteSlot == 1 ? " selected" : "",
+    config.remoteSlot == 2 ? " selected" : "",
+    config.remoteSlot == 3 ? " selected" : "",
+    config.invertSerial ? " checked" : "");
 
     html[sizeof(html) - 1] = '\0';
     if (written < 0 || written >= (int)(sizeof(html) - 1)) {
@@ -989,6 +1179,9 @@ static MHD_Result handle_request(void *cls,
 
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/api/remote") == 0) {
         return handleRemoteApi(connection, method, upload_data_size, upload_data, con_cls);
+    }
+    if (strcmp(url, "/api/settings") == 0) {
+        return handleSettingsApi(connection, method, upload_data_size, upload_data, con_cls);
     }
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/remote") == 0) {
         const char* html =

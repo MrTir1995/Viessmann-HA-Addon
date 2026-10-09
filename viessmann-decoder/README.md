@@ -27,6 +27,9 @@ Auf dem Decoder-Host muss der passende Busadapter angeschlossen sein; der
 Netzwerkzugriff von Home Assistant erfolgt über HTTP, nicht über USB/IP.
 Standardmäßig startet der Container als KM-Bus-Vitotrol-Slave
 (`km_remote`, 1200 Baud, 8E1, Vitotrol 300, Steckplatz 1).
+Die Einstellungen lassen sich unter `/settings` ändern. Gespeicherte Werte
+werden nach einem Neustart des Containers angewendet und bleiben im persistenten
+`/data`-Volume erhalten.
 
 Adapter und Protokoll können beim Start gesetzt werden:
 
@@ -47,6 +50,7 @@ Ohne Compose:
 docker build -t viessmann-decoder:local .
 docker run -d --name viessmann-decoder --init --restart unless-stopped \
   --device /dev/ttyUSB0:/dev/ttyUSB0 -p 8099:8099 \
+  -v viessmann-decoder-data:/data \
   -e SERIAL_PORT=/dev/ttyUSB0 -e PROTOCOL=km_remote \
   -e BAUD_RATE=1200 -e SERIAL_CONFIG=8E1 viessmann-decoder:local
 ```
@@ -57,12 +61,14 @@ Ohne `/data/options.json` liest `run.sh` die Umgebungsvariablen `SERIAL_PORT`,
 Für KW/P300 Baudrate und Parität passend zur Anlage einstellen. `km_remote`
 erzwingt im Programm 1200 Baud/8E1; `REMOTE_MODEL` (`vitotrol200`/`vitotrol300`),
 `REMOTE_SLOT` (1–3) und `INVERT_SERIAL` (`true`/`false`) bleiben konfigurierbar.
-Existiert `/data/options.json`, hat diese Datei Vorrang, damit der bisherige
-Add-on-Betrieb unverändert bleibt. Die Integration legt keine Decoder-Konfiguration
-an und benötigt kein Datenvolume.
+Existiert `/data/options.json`, hat diese Datei Vorrang vor Umgebungsvariablen.
+Über `/settings` gespeicherte Werte unter `/data/ui_settings.json` haben Vorrang
+vor Add-on-Optionen und Umgebungsvariablen.
+Die Integration legt keine Decoder-Konfiguration an.
 
 **Netzwerksicherheit:** Die API und Weboberfläche haben keine Authentifizierung;
-im Vitotrol-Modus sind auch Steuerbefehle möglich. Port 8099 nur für
+im Vitotrol-Modus sind auch Steuerbefehle möglich, und `/settings` kann
+Konfiguration speichern. Port 8099 nur für
 vertrauenswürdige Geräte im LAN/VPN freigeben, niemals direkt ins Internet.
 Für verschlüsselten Zugriff einen HTTPS-Reverse-Proxy verwenden.
 

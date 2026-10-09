@@ -45,6 +45,16 @@ else
     USBIP_PORT="3240"
 fi
 
+UI_SETTINGS_FILE="/data/ui_settings.json"
+if [[ -f "${UI_SETTINGS_FILE}" ]]; then
+    BAUD_RATE=$(jq -r --arg default "${BAUD_RATE}" '.baud_rate // $default' "${UI_SETTINGS_FILE}")
+    PROTOCOL=$(jq -r --arg default "${PROTOCOL}" '.protocol // $default' "${UI_SETTINGS_FILE}")
+    SERIAL_CONFIG=$(jq -r --arg default "${SERIAL_CONFIG}" '.serial_config // $default' "${UI_SETTINGS_FILE}")
+    REMOTE_MODEL=$(jq -r --arg default "${REMOTE_MODEL}" '.remote_model // $default' "${UI_SETTINGS_FILE}")
+    REMOTE_SLOT=$(jq -r --arg default "${REMOTE_SLOT}" '.remote_slot // $default' "${UI_SETTINGS_FILE}")
+    INVERT_SERIAL=$(jq -r --arg default "${INVERT_SERIAL}" 'if (.invert_serial | type) == "boolean" then .invert_serial else ($default == "true") end' "${UI_SETTINGS_FILE}")
+fi
+
 case "${PROTOCOL}" in
     vbus|kw|p300|km|km_remote) ;;
     *) log_error "Invalid PROTOCOL: ${PROTOCOL}"; exit 1 ;;

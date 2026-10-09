@@ -31,6 +31,33 @@ Die Einstellungen lassen sich unter `/settings` ändern. Gespeicherte Werte
 werden nach einem Neustart des Containers angewendet und bleiben im persistenten
 `/data`-Volume erhalten.
 
+### Container über die Weboberfläche neu starten
+
+Der Button **Container neu starten** im Dashboard und unter `/settings`
+fordert eine Bestätigung an. Einstellungen zuerst speichern: Beim Neustart
+wird `run.sh` erneut ausgeführt und liest die gespeicherte Konfiguration ein.
+Die Verbindung wird dabei unterbrochen; die Oberfläche prüft anschließend,
+ob eine neue Serverinstanz erreichbar ist. Bleibt sie aus, Containerstatus
+prüfen und die Seite manuell neu laden.
+
+Der Server beendet sich dafür geordnet; erst ein externer Neustartmechanismus
+startet den **Container** wieder. Ein Docker-Socket, Supervisor-Token oder
+Neustart des Hosts ist dafür nicht nötig:
+
+- **Docker:** `compose.yaml` und das untenstehende `docker run` verwenden
+  `restart: unless-stopped` bzw. `--restart unless-stopped`.
+  Ein eigener Docker-Aufruf ohne passende Neustartregel bleibt dagegen gestoppt.
+- **Home Assistant Add-on:** Den **Watchdog** in der Add-on-Ansicht aktivieren.
+  Ohne aktivierten Watchdog bleibt der Container nach der Anfrage gestoppt;
+  eine Docker-Neustartregel des Supervisors wird nicht vorausgesetzt.
+- **Natives Hostprogramm:** Der Container-Neustart ist nicht verfügbar.
+
+Die Oberfläche erkennt die Containerumgebung, kann aber die tatsächliche
+Neustartregel bzw. Watchdog-Einstellung nicht prüfen. Ein angenommener
+Neustartauftrag ist deshalb noch keine Bestätigung eines erfolgreichen Neustarts.
+Das KM-Bus-Laufzeitprofil wird zurückgesetzt; Bus-Logs, empfangene Datensätze
+und ausstehende Steuerbefehle im Arbeitsspeicher gehen verloren.
+
 Adapter und Protokoll können beim Start gesetzt werden:
 
 ```bash
@@ -67,8 +94,10 @@ vor Add-on-Optionen und Umgebungsvariablen.
 Die Integration legt keine Decoder-Konfiguration an.
 
 **Netzwerksicherheit:** Die API und Weboberfläche haben keine Authentifizierung;
-im Vitotrol-Modus sind auch Steuerbefehle möglich, und `/settings` kann
-Konfiguration speichern. Port 8099 nur für
+im Vitotrol-Modus sind auch Steuerbefehle möglich, `/settings` kann
+Konfiguration speichern und die API kann einen Container-Neustart anfordern.
+Der Neustart verlangt bestätigtes JSON und weist fremde Browser-Ursprünge ab;
+das ersetzt keine Authentifizierung. Port 8099 nur für
 vertrauenswürdige Geräte im LAN/VPN freigeben, niemals direkt ins Internet.
 Für verschlüsselten Zugriff einen HTTPS-Reverse-Proxy verwenden.
 
@@ -201,9 +230,13 @@ Select protocol `km_remote`, model `vitotrol300`, and the heating-circuit slot (
 
 Der Dashboard-Button **Vitotrol-Steuerung** öffnet `/remote`. Dort lassen sich
 Raum-Isttemperatur, normale und reduzierte Raum-Solltemperatur, Betriebsart,
-Party- und Sparbetrieb vorgeben. Beim Einschalten des Partybetriebs ist auch
-dessen Solltemperatur wählbar. Steuerwerte sind lokale Vorgaben, keine
-Bestätigung durch die Regelung. Mehrere API-Vorgaben werden atomar übernommen;
+Party- und Sparbetrieb vorgeben. Im Profil **WiFiVitotrol** ist beim Einschalten
+des Partybetriebs dessen Solltemperatur wählbar (`0xCF`, standardmäßig 20 °C).
+**OpenV** verwendet dagegen `0xCB` zum Einschalten ohne Temperaturvorgabe;
+eine explizite Partytemperatur wird in diesem Profil atomar abgelehnt.
+Steuerwerte sind lokale Vorgaben, keine Bestätigung durch die Regelung:
+vor Verwendung an der konkreten Regelung prüfen.
+Mehrere API-Vorgaben werden atomar übernommen;
 ungültige Werte oder eine volle Warteschlange führen zu keiner Teiländerung.
 
 Die Live-Anzeige zeigt empfangene, XOR-dekodierte Datensätze mit Alter,
@@ -382,7 +415,7 @@ The dashboard automatically refreshes data every 2 seconds, showing:
 
 1. Double-check protocol settings
 2. Verify baud rate is correct for your device
-3. Check serial configuration (8N1 vs 8E2)
+3. Check serial configuration (8N1 for VBUS, 8E2 for KW/P300, 8E1 for `km_remote`)
 4. Ensure no other software is using the serial port
 5. Try restarting the add-on
 
@@ -450,23 +483,14 @@ For issues, questions, or contributions:
 
 ### Common Issues
 
-#### "[FATAL tini (7)] exec /init failed: Permission denied" Error
+#### Container startet nach dem Neustartauftrag nicht wieder
 
-This error has been fixed in the latest version of the addon by properly configuring S6-Overlay v3. If you encounter this error:
-
-1. Update the addon to the latest version (v2.1.2 or later)
-2. Restart the addon
-
-**Technical Details**: Home Assistant's base images use S6-Overlay v3, which requires the `/init` process to run as PID 1. The error occurs when Docker's default init system (tini) conflicts with S6-Overlay.
-
-**The fix includes**:
-
-- Setting `init: false` in the addon's config.yaml to prevent Docker's tini from conflicting with S6-Overlay
-- Enhanced Docker build process that ensures all service scripts have proper executable permissions
-- Comprehensive permission setting using `chmod -R +x /etc/services.d/*/` during the build process
-- This ensures permissions are correctly applied regardless of host filesystem state
-
-The addon uses the proper S6-Overlay service directory structure (`/etc/services.d/viessmann-decoder/run`). See the [Home Assistant S6-Overlay migration guide](https://developers.home-assistant.io/blog/2022/05/12/s6-overlay-base-images/) for more information.
+Das aktuelle Image verwendet kein s6-overlay: `run.sh` startet das
+Webserverprogramm direkt mit `exec`, unter Docker/Supervisor mit tini.
+Prüfen Sie bei einem gestoppten Container die Docker-Neustartregel oder den
+aktivierten Home-Assistant-Watchdog. Ohne diese externe Überwachung startet
+ein Prozessende den Container nicht erneut. Starten Sie ihn nötigenfalls
+manuell über Docker oder die Add-on-Ansicht.
 
 #### Serial Port Not Found
 
@@ -483,8 +507,8 @@ If the addon reports that the serial port is not found:
 If the addon starts but cannot communicate with the heating system:
 
 1. Verify the protocol selection matches your device
-2. Check the baud rate setting (9600 for VBUS, 4800 for KW/P300/KM)
-3. Verify the serial configuration (8N1 for VBUS, 8E2 for KW/P300)
+2. Check the baud rate setting (9600 for VBUS, 4800 for KW/P300, forced 1200 for `km_remote`)
+3. Verify the serial configuration (8N1 for VBUS, 8E2 for KW/P300, forced 8E1 for `km_remote`)
 4. Test the serial adapter with another tool to confirm it works
 5. Check your hardware wiring and connections
 

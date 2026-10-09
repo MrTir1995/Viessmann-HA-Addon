@@ -31,6 +31,10 @@ bool modeCommand(const char* mode, uint8_t& command) {
 bool readOnlyRegister(uint8_t address) {
     return address >= 0xF8 && address <= 0xFB;
 }
+
+bool plausibleClass(uint8_t value) {
+    return value == 0x00 || value == 0x04 || value == 0x11 || value == 0xFF;
+}
 }
 
 KMBusVitotrol::KMBusVitotrol(Stream* serial, uint8_t modelId, uint8_t slot)
@@ -192,19 +196,28 @@ void KMBusVitotrol::discardBytes(uint16_t count) {
 
 void KMBusVitotrol::parseFrames() {
     while (_frameLength >= 4) {
-        if ((_frame[0] != 0x11 && _frame[0] != 0xFF) || _frame[1] != 0) {
+        if (!plausibleClass(_frame[0]) || !plausibleClass(_frame[1])) {
+            discardBytes(1);
+            continue;
+        }
+        // Known Vitotrol traffic uses destination slots 0..3. Checking the slot
+        // also rejects false echo headers formed across a corrupt frame boundary.
+        if (_frameLength >= 5 && _frame[4] > 3 && _frame[4] != _slot) {
             discardBytes(1);
             continue;
         }
         const uint16_t length = _frame[3];
         const uint8_t command = _frame[2];
-        const bool impossibleLength =
+        const bool addressed = _frameLength >= 6 &&
+            (_frame[0] == 0x11 || _frame[0] == 0xFF) && _frame[1] == 0 &&
+            (_frame[4] == _slot || _frame[4] == 0);
+        const bool impossibleLength = addressed && (
             (command == 0x00 && length != 8) ||
             (command == 0x31 && length != 9) ||
             ((command == 0x33 || command == 0xB1) && length != 10) ||
             (command == 0xB3 && length < 10) ||
-            (command == 0xBF && (length < 9 || length > 38)) ||
-            (command == 0x3F && (length < 9 || length > 41));
+            (command == 0xBF && (length < 9 || length > (_openv ? 38 : 41))) ||
+            (command == 0x3F && (length < 9 || length > 41)));
         if (length < 8 || impossibleLength) {
             ++_malformedFrames;
             discardBytes(1);
@@ -214,13 +227,24 @@ void KMBusVitotrol::parseFrames() {
         // Otherwise an uncorrupted outer frame owns its payload, even if that payload
         // contains a complete CRC-valid telegram.
         bool impossiblePayload = false;
-        if (_frameLength >= 7) {
+        if (addressed && _frameLength >= 7) {
             if (command == 0xB3 && ((length - 8) & 1))
                 impossiblePayload = uint16_t(_frame[6]) * 2 + 9 != length;
             if (command == 0xBF) {
                 const uint8_t id = _frame[6];
-                impossiblePayload = id < 0x10 || id > 0x22 ||
-                    (id == datasetId(ROOM) && length != 12);
+                if (!_openv && id == 0x34) {
+                    impossiblePayload = length < 12;
+                    if (_frameLength >= 10) {
+                        const uint8_t innerId = _frame[9] ^ XOR_MASK;
+                        impossiblePayload = impossiblePayload ||
+                            innerId >= DATASET_STORAGE_SIZE ||
+                            (innerId == datasetId(ROOM) && length != 15);
+                    }
+                } else {
+                    impossiblePayload = length > 38 || id >= DATASET_STORAGE_SIZE ||
+                        (_openv && (id < 0x10 || id > 0x22)) ||
+                        (id == datasetId(ROOM) && length != 12);
+                }
             }
             if (command == 0x3F && length > 9 && _frame[6] == 0x34)
                 impossiblePayload = length < 12;
@@ -235,8 +259,9 @@ void KMBusVitotrol::parseFrames() {
                                   (uint16_t(_frame[length - 1]) << 8);
         if (calculateCRC(_frame, length - 2) != received) {
             ++_crcErrors;
-            // Slide rather than lose the next frame after a corrupt length/CRC.
-            discardBytes(1);
+            // A plausible complete telegram still owns its payload when corrupt:
+            // promoting an embedded valid packet would fabricate a bus grant.
+            discardBytes(length);
             continue;
         }
         processFrame();
@@ -245,7 +270,8 @@ void KMBusVitotrol::parseFrames() {
 }
 
 void KMBusVitotrol::processFrame() {
-    if (_frame[4] != _slot && _frame[4] != 0) return;
+    if ((_frame[0] != 0x11 && _frame[0] != 0xFF) || _frame[1] != 0 ||
+        (_frame[4] != _slot && _frame[4] != 0)) return;
     const uint8_t command = _frame[2];
     const uint8_t length = _frame[3] - 8;
     const uint8_t* data = _frame + 6;
@@ -302,7 +328,7 @@ void KMBusVitotrol::processFrame() {
         }
         case 0xBF:
             write = true;
-            valid = recordMasterDataset(data, length, false);
+            valid = recordMasterDataset(data, length, !_openv);
             break;
         case 0x3F:
             if (length == 1) {
@@ -440,11 +466,12 @@ bool KMBusVitotrol::recordMasterDataset(const uint8_t* data, uint8_t length,
         data += 3; length -= 3;
         id = data[0] ^ XOR_MASK;
     }
-    if (id < 0x10 || id > 0x22) return false;
+    if (id >= DATASET_STORAGE_SIZE || (_openv && (id < 0x10 || id > 0x22)))
+        return false;
     const uint8_t payloadLength = length - 1;
     if (payloadLength > MAX_DATASET_DATA ||
         (id == datasetId(ROOM) && payloadLength != 3)) return false;
-    const uint8_t index = id - 0x10;
+    const uint8_t index = id;
     for (uint8_t i = 0; i < payloadLength; ++i)
         _datasets[index][i] = data[i + 1] ^ XOR_MASK;
     _datasetLengths[index] = payloadLength;
@@ -475,8 +502,8 @@ uint32_t KMBusVitotrol::getUnknownCommandCount() const { return _unknownCommands
 bool KMBusVitotrol::getDataset(uint8_t id, const uint8_t*& data, uint8_t& length,
                              uint32_t& receivedAt) const {
     data = nullptr; length = 0; receivedAt = 0;
-    if (id < 0x10 || id > 0x22 || !_datasetPresent[id - 0x10]) return false;
-    const uint8_t index = id - 0x10;
+    if (id >= DATASET_STORAGE_SIZE || !_datasetPresent[id]) return false;
+    const uint8_t index = id;
     data = _datasets[index]; length = _datasetLengths[index];
     receivedAt = _datasetReceivedAt[index];
     return true;

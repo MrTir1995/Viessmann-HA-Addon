@@ -50,6 +50,7 @@ private:
     static const uint16_t MAX_FRAME_SIZE = 255;
     static const uint8_t DATASET_QUEUE_SIZE = 4;
     static const uint8_t MAX_DATASET_DATA = 29;
+    static const uint16_t DATASET_STORAGE_SIZE = 254;
     enum DatasetKind : uint8_t { ROOM, DESIRED, REDUCED, MODE };
     struct QueuedDataset {
         uint8_t id;
@@ -61,10 +62,10 @@ private:
     Stream* _serial;
     uint8_t _modelId, _slot;
     uint8_t _registers[256];
-    uint8_t _datasets[19][MAX_DATASET_DATA];
-    uint8_t _datasetLengths[19];
-    bool _datasetPresent[19];
-    uint32_t _datasetReceivedAt[19];
+    uint8_t _datasets[DATASET_STORAGE_SIZE][MAX_DATASET_DATA];
+    uint8_t _datasetLengths[DATASET_STORAGE_SIZE];
+    bool _datasetPresent[DATASET_STORAGE_SIZE];
+    uint32_t _datasetReceivedAt[DATASET_STORAGE_SIZE];
     QueuedDataset _queue[DATASET_QUEUE_SIZE];
     uint8_t _queueHead, _queueCount;
     uint8_t _frame[MAX_FRAME_SIZE];

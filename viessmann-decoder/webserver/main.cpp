@@ -73,6 +73,19 @@ constexpr size_t MAX_BUS_LOG_ENTRIES = 500;
 constexpr size_t MAX_BUS_LOG_BYTES = 32;
 std::deque<BusLogEntry> busLogs;
 std::mutex busLogMutex;
+std::mutex restartMutex;
+bool restartPending = false;
+std::chrono::steady_clock::time_point restartDeadline;
+constexpr int RESTART_EXIT_CODE = 75;
+const std::string processInstanceId = std::to_string(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+
+bool containerRestartSupported() {
+    return (access("/.dockerenv", F_OK) == 0 ||
+            access("/run/.containerenv", F_OK) == 0 || getpid() == 1) &&
+           access("/run.sh", X_OK) == 0;
+}
 
 void recordBusTraffic(bool transmitted, const uint8_t* data, size_t size) {
     const auto now = std::chrono::system_clock::now();
@@ -431,6 +444,141 @@ MHD_Result queueJson(MHD_Connection* connection, unsigned int status, const char
     const MHD_Result result = MHD_queue_response(connection, status, response);
     MHD_destroy_response(response);
     return result;
+}
+
+bool restartOriginAllowed(MHD_Connection* connection) {
+    const char* site = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Sec-Fetch-Site");
+    if (site && strcasecmp(site, "cross-site") == 0) return false;
+    const char* origin = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Origin");
+    if (!origin) return true;
+    // Ingress rewrites Host; the browser's forbidden same-origin header retains
+    // the original origin relationship. JSON-only POST still blocks HTML forms.
+    if (site && strcasecmp(site, "same-origin") == 0) return true;
+    const char* host = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
+    if (!host) return false;
+    const std::string value(origin);
+    size_t start;
+    if (value.compare(0, 7, "http://") == 0) start = 7;
+    else if (value.compare(0, 8, "https://") == 0) start = 8;
+    else return false;
+    return strcasecmp(value.substr(start).c_str(), host) == 0;
+}
+
+bool parseRestartConfirmation(const std::string& body) {
+    size_t position = 0;
+    for (const char* token : {"{", "\"confirm\"", ":", "true", "}"}) {
+        while (position < body.size() &&
+               (body[position] == ' ' || body[position] == '\t' ||
+                body[position] == '\r' || body[position] == '\n')) ++position;
+        const size_t length = strlen(token);
+        if (body.compare(position, length, token) != 0) return false;
+        position += length;
+    }
+    while (position < body.size() &&
+           (body[position] == ' ' || body[position] == '\t' ||
+            body[position] == '\r' || body[position] == '\n')) ++position;
+    return position == body.size();
+}
+
+MHD_Result handleRestartApi(MHD_Connection* connection, const char* method,
+                            size_t* uploadSize, const char* uploadData, void** context) {
+    if (strcmp(method, "POST") != 0)
+        return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"Use POST\"}");
+    if (!restartOriginAllowed(connection))
+        return queueJson(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"Cross-origin restart refused\"}");
+    const char* contentType = MHD_lookup_connection_value(
+        connection, MHD_HEADER_KIND, "Content-Type");
+    std::string mediaType = contentType ? contentType : "";
+    mediaType = mediaType.substr(0, mediaType.find(';'));
+    while (!mediaType.empty() && (mediaType.back() == ' ' || mediaType.back() == '\t'))
+        mediaType.pop_back();
+    if (strcasecmp(mediaType.c_str(), "application/json") != 0)
+        return queueJson(connection, MHD_HTTP_UNSUPPORTED_MEDIA_TYPE,
+                         "{\"error\":\"Use application/json\"}");
+    auto* request = static_cast<RemotePostData*>(*context);
+    if (!request) {
+        *context = new RemotePostData();
+        return MHD_YES;
+    }
+    if (*uploadSize > 0) {
+        if (*uploadSize > 256 - request->body.size()) request->tooLarge = true;
+        if (!request->tooLarge) request->body.append(uploadData, *uploadSize);
+        *uploadSize = 0;
+        return MHD_YES;
+    }
+    const bool tooLarge = request->tooLarge;
+    const bool confirmed = !tooLarge && parseRestartConfirmation(request->body);
+    delete request;
+    *context = nullptr;
+    if (tooLarge)
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE, "{\"error\":\"Request body too large\"}");
+    if (!confirmed)
+        return queueJson(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"Expected {\\\"confirm\\\":true}\"}");
+    if (!containerRestartSupported())
+        return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
+                         "{\"error\":\"Container restart unavailable on this host\"}");
+    std::lock_guard<std::mutex> lock(restartMutex);
+    if (restartPending)
+        return queueJson(connection, MHD_HTTP_CONFLICT, "{\"error\":\"Restart already pending\"}");
+    const MHD_Result result = queueJson(connection, MHD_HTTP_ACCEPTED,
+                                       "{\"status\":\"restarting\"}");
+    if (result == MHD_YES) {
+        restartDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        restartPending = true;
+    }
+    return result;
+}
+
+const char* getRestartHTML() {
+    return R"HTML(
+<button type="button" id="restartButton" class="nav-button btn btn-secondary" disabled>Container neu starten</button>
+<div id="restartMessage" role="status"></div>
+<script>
+const restartButton=document.getElementById('restartButton');
+const restartMessage=document.getElementById('restartMessage');
+async function restartFetch(path,options={}){
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),2000);
+ try{return await fetch(path,{...options,cache:'no-store',signal:controller.signal});}
+ finally{clearTimeout(timer);}
+}
+async function loadRestartCapability(){
+ try{const response=await restartFetch('api/system');if(!response.ok)throw new Error();
+ const system=await response.json();restartButton.disabled=!system.restart_supported||system.restart_pending;
+ restartMessage.textContent=system.restart_supported?
+ 'Neustart benötigt Docker-Neustartregel oder aktivierten Home-Assistant-Watchdog.':
+ 'Container-Neustart ist auf diesem Host nicht verfügbar.';}
+ catch(error){restartMessage.textContent='Neustart-Verfügbarkeit konnte nicht geprüft werden.';}
+}
+async function waitForContainer(previousInstance){
+ const deadline=Date.now()+90000;
+ while(Date.now()<deadline){
+  try{const response=await restartFetch('api/system');
+   if(response.ok){const system=await response.json();
+    if(typeof system.instance_id==='string'&&system.instance_id!==previousInstance){
+     window.location.href=new URL('./',window.location.href).href;return;}}}
+  catch(error){}
+  await new Promise(resolve=>setTimeout(resolve,250));
+ }
+ restartMessage.textContent='Neustart nicht bestätigt. Bitte Container und Neustartregel bzw. Watchdog prüfen und die Seite manuell neu laden.';
+}
+restartButton.addEventListener('click',async()=>{
+ if(!window.confirm('Container wirklich neu starten? Die Verbindung wird kurz unterbrochen. Docker-Neustartregel oder Home-Assistant-Watchdog muss aktiviert sein.'))return;
+ restartButton.disabled=true;
+ try{const before=await restartFetch('api/system');if(!before.ok)throw new Error('Statusprüfung fehlgeschlagen');
+ const previousInstance=(await before.json()).instance_id;
+ if(typeof previousInstance!=='string')throw new Error('Prozesskennung fehlt');
+ const response=await restartFetch('api/restart',{method:'POST',
+ headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+ const result=await response.json();if(response.status!==202)throw new Error(result.error||'Neustart abgelehnt');
+ restartMessage.textContent='Container wird neu gestartet. Warte auf eine neue Prozesskennung…';
+ await waitForContainer(previousInstance);}
+ catch(error){await loadRestartCapability();
+ restartMessage.textContent='Neustart nicht bestätigt: '+error.message+'. Bitte Container prüfen.';}
+});
+loadRestartCapability();
+</script>
+)HTML";
 }
 
 using SettingsPostData = RemotePostData;
@@ -1463,8 +1611,9 @@ Gesendet wird nur nach Freigabe durch den Master. Vor Verwendung am Zielgerät p
 <option value="off">Abschaltbetrieb</option><option value="party_on">Partybetrieb an</option>
 <option value="party_off">Partybetrieb aus</option><option value="economy_on">Sparbetrieb an</option>
 <option value="economy_off">Sparbetrieb aus</option></select></label>
-<label>Party-Soll °C (bei Party an) <input id="party" type="number" min="5" max="35" step="1" required></label>
+<label>Party-Soll °C (bei Party an) <input id="party" type="number" min="5" max="35" step="1" required disabled></label>
 <button type="submit">Übermitteln</button></form>
+<p>Partytemperatur ist nur im angewendeten WiFi-Profil verfügbar.</p>
 <p id="requested"></p></section>
 <section><h2>Protokollvariante</h2>
 <p>Die Quellen widersprechen sich bei Schreibquittierungen und Datensatzzuordnung.
@@ -1481,6 +1630,7 @@ Alter beachten: alte Daten sind keine aktuellen Messwerte.</p><pre id="datasets"
 const el=id=>document.getElementById(id);
 const dirty=new Set();
 const revisions=new Map();
+let appliedProfile=null;
 ['room','desired','reduced','party','mode','profile'].forEach(id=>el(id).addEventListener('input',()=>{
     dirty.add(id);revisions.set(id,(revisions.get(id)||0)+1);
 }));
@@ -1508,7 +1658,8 @@ async function send(value,id){
     event.preventDefault();
     const value=(id==='mode'||id==='profile')?el(id).value:Number(el(id).value);
     const command={[key]:value};
-    if(id==='mode'&&value==='party_on')command.party_room_temperature=Number(el('party').value);
+    if(id==='mode'&&value==='party_on'&&appliedProfile==='wifi')
+        command.party_room_temperature=Number(el('party').value);
     send(command,id);
 });
 async function refresh(){
@@ -1516,6 +1667,8 @@ async function refresh(){
         const response=await fetch('api/remote',{cache:'no-store'});
         if(!response.ok)throw new Error('HTTP '+response.status);
         const data=await response.json();
+        appliedProfile=data.profile;
+        el('party').disabled=appliedProfile!=='wifi';
         el('state').textContent=data.model+' · Slot '+data.slot+' · '+(data.online?'Master erreichbar':'Keine aktuellen Master-Telegramme');
         sync('room',data.room_temperature);sync('desired',data.desired_room_temperature);
         sync('reduced',data.reduced_room_temperature);sync('party',data.party_room_temperature);
@@ -1550,6 +1703,23 @@ static MHD_Result handle_request(void *cls,
 
     struct MHD_Response *response;
     MHD_Result ret;
+
+    if (strcmp(url, "/api/system") == 0) {
+        if (strcmp(method, "GET") != 0)
+            return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"Use GET\"}");
+        std::lock_guard<std::mutex> lock(restartMutex);
+        char system[320];
+        snprintf(system, sizeof(system),
+                 "{\"restart_supported\":%s,\"restart_pending\":%s,"
+                 "\"restart_mechanism\":\"process_exit\","
+                 "\"restart_manager_required\":true,\"restart_exit_code\":75,"
+                 "\"instance_id\":\"%s\"}",
+                 containerRestartSupported() ? "true" : "false",
+                 restartPending ? "true" : "false", processInstanceId.c_str());
+        return queueJson(connection, MHD_HTTP_OK, system);
+    }
+    if (strcmp(url, "/api/restart") == 0)
+        return handleRestartApi(connection, method, upload_data_size, upload_data, con_cls);
 
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/api/remote") == 0) {
         return handleRemoteApi(connection, method, upload_data_size, upload_data, con_cls);
@@ -1587,10 +1757,11 @@ static MHD_Result handle_request(void *cls,
 
     // Handle routes
     if (strcmp(url, "/") == 0) {
-        const char* html = getDashboardHTML();
-        response = MHD_create_response_from_buffer(strlen(html),
-                                                   (void*)html,
-                                                   MHD_RESPMEM_PERSISTENT);
+        std::string html = getDashboardHTML();
+        html.insert(html.find("</body>"), getRestartHTML());
+        response = MHD_create_response_from_buffer(html.size(),
+                                                   (void*)html.data(),
+                                                   MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
@@ -1617,9 +1788,10 @@ static MHD_Result handle_request(void *cls,
         return ret;
     }
     else if (strcmp(url, "/settings") == 0) {
-        const char* html = getSettingsHTML();
-        response = MHD_create_response_from_buffer(strlen(html),
-                                                   (void*)html,
+        std::string html = getSettingsHTML();
+        html.insert(html.find("</body>"), getRestartHTML());
+        response = MHD_create_response_from_buffer(html.size(),
+                                                   (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
@@ -1798,8 +1970,16 @@ int main(int argc, char* argv[]) {
     // Main loop with serial port reconnection logic
     int reconnectCounter = 0;
     int kmbusPollCounter = 0;  // Counter for KM-Bus polling
+    bool intentionalRestart = false;
 
     while (running) {
+        {
+            std::lock_guard<std::mutex> lock(restartMutex);
+            if (restartPending && std::chrono::steady_clock::now() >= restartDeadline) {
+                intentionalRestart = true;
+                break;
+            }
+        }
         bool shouldReconnect;
 
         pthread_mutex_lock(&data_mutex);
@@ -1857,7 +2037,10 @@ int main(int argc, char* argv[]) {
     MHD_stop_daemon(daemon);
     if (vbus) delete vbus;
     if (vitotrol) delete vitotrol;
+    vbusSerial.end();
 
     printf("Shutdown complete\n");
-    return 0;
+    // Exit the entrypoint, not just re-exec the server: the runtime then runs
+    // /run.sh again. HA needs its watchdog; Docker needs a restart policy.
+    return intentionalRestart ? RESTART_EXIT_CODE : 0;
 }

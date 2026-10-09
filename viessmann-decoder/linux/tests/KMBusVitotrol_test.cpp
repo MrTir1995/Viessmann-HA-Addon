@@ -102,6 +102,17 @@ void sourceFixturesAndInitialTemperature() {
     stream.output.clear();
     stream.feed({0x11,0,0x31,9,1,1,0xF8,0x29,0x34}); device.loop();
     CHECK(stream.output == reply(0xB1, {0xF8,0x11}));
+    // Published party-on capture: destination slot2, circuit1, 20 degrees.
+    const Bytes sourceParty = {0,0x11,0xBF,0x11,2,1,0x14,0xAA,0xAB,0x65,
+                               0xBE,0xAA,0xAA,0xAA,0xAA,0x0B,0x5D};
+    CHECK(crc(Bytes(sourceParty.begin(), sourceParty.end() - 2)) == 0x5D0B);
+    CHECK((sourceParty[9] ^ 0xAA) == 0xCF);
+    CHECK((sourceParty[10] ^ 0xAA) == 20);
+    CHECK(device.getPartyRoomTemperature() == 20);
+    CHECK(device.setOperatingMode("party_on"));
+    const Bytes requestedParty = exchange(device, stream, 0);
+    CHECK(requestedParty == reply(0xBF, dataset(0x14, {0,1,0xCB,20,0,0,0,0})));
+    CHECK(requestedParty[10] == sourceParty[10]);
 }
 
 void registerCommandsAndVariants() {
@@ -226,7 +237,8 @@ void rawDatasetsAndStatusGuards() {
     CHECK(exchange(device, stream, 0x3F, {0x1D}).empty());
     CHECK(exchange(device, stream, 0xBF, dataset(0x1D, Bytes(30, 0))).empty());
     CHECK(exchange(device, stream, 0xBF, dataset(0x20, {1,2})).empty());
-    CHECK(exchange(device, stream, 0xBF, {0x23}).empty());
+    CHECK(exchange(device, stream, 0xBF, {0xFE}).empty());
+    CHECK(exchange(device, stream, 0xBF, {0xFF}).empty());
     CHECK(exchange(device, stream, 0xBF, {}).empty());
     CHECK(exchange(device, stream, 0xBF, dataset(0x1D, Bytes(6,0))) == reply(0x80));
     CHECK(!device.getOutsideTemperature(outside));
@@ -253,7 +265,7 @@ void wifiDatasetRequestAndWrappedWrite() {
     CHECK(exchange(device, stream, 0x3F, {0x34,0,0}).empty());
     CHECK(exchange(device, stream, 0x3F, {0x34,0}).empty());
     CHECK(exchange(device, stream, 0x3F, {}).empty());
-    CHECK(exchange(device, stream, 0x3F, {0x34,0,0,0xFF,0}).empty());
+    CHECK(exchange(device, stream, 0x3F, {0x34,0,0,uint8_t(0xFE ^ 0xAA),0}).empty());
     CHECK(device.setDesiredRoomTemperature(23));
     CHECK(exchange(device, stream, 0x3F, {0x15}) ==
           reply(0xBF, dataset(0x15, {0x0C,1,0xCD,23,0})));
@@ -262,6 +274,58 @@ void wifiDatasetRequestAndWrappedWrite() {
     CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x15, {0x0C,1,0xCD,23,0})));
     CHECK(exchange(device, stream, 0x3F, {0x20}) == reply(0xBF, dataset(0x20, {200,0,0})));
     CHECK(exchange(device, stream, 0x3F, {0x15}).empty());
+}
+
+void wifiRawDatasetRangeAndBothWrapperCommands() {
+    FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
+    const uint8_t* raw; uint8_t length; uint32_t received;
+    clockMillis = 123;
+    CHECK(exchange(device, stream, 0x3F, {0x34,0xA8,0xA8,0xA2,0xAB,0xA8}) == reply(0x80));
+    CHECK(device.getDataset(0x08, raw, length, received));
+    CHECK(length == 2 && raw[0] == 1 && raw[1] == 2 && received == 123);
+    CHECK(exchange(device, stream, 0xBF, {0x34,0xA8,0xA8,0xA2,0xA9,0xAE}) == reply(0x80));
+    CHECK(device.getDataset(0x08, raw, length, received));
+    CHECK(length == 2 && raw[0] == 3 && raw[1] == 4);
+    CHECK(exchange(device, stream, 0xBF, dataset(0xAD, {0,1,0xFF,0x34})) == reply(0x80));
+    CHECK(device.getDataset(0xAD, raw, length, received));
+    CHECK(length == 4 && raw[0] == 0 && raw[2] == 0xFF && raw[3] == 0x34);
+    CHECK(exchange(device, stream, 0xBF, dataset(0xBE, {0x55,0x66})) == reply(0x80));
+    CHECK(device.getDataset(0xBE, raw, length, received));
+    CHECK(length == 2 && raw[0] == 0x55 && raw[1] == 0x66);
+    CHECK(exchange(device, stream, 0xBF, {0}) == reply(0x80));
+    CHECK(device.getDataset(0, raw, length, received) && length == 0 && received == 123);
+
+    Bytes maximum = {0x34,0xA8,0xA8,uint8_t(0xFD ^ 0xAA)};
+    maximum.insert(maximum.end(), 29, 0xAA);
+    CHECK(frame(0xBF, maximum).size() == 41);
+    CHECK(exchange(device, stream, 0xBF, maximum) == reply(0x80));
+    CHECK(device.getDataset(0xFD, raw, length, received) && length == 29 && raw[28] == 0);
+    maximum.push_back(0xAA);
+    CHECK(exchange(device, stream, 0xBF, maximum).empty());
+    CHECK(exchange(device, stream, 0xBF, dataset(0xAD, Bytes(30,0))).empty());
+    CHECK(exchange(device, stream, 0xBF, {0x34,0xA8,0xA8}).empty());
+    CHECK(exchange(device, stream, 0xBF,
+                   {0x34,0xA8,0xA8,uint8_t(0xFE ^ 0xAA)}).empty());
+    CHECK(!device.getDataset(0xFE, raw, length, received));
+    CHECK(raw == nullptr && length == 0 && received == 0);
+    CHECK(!device.getDataset(0xFF, raw, length, received));
+    for (uint8_t id : Bytes{0,0x08,0xAD,0xBE,0xFD})
+        CHECK(exchange(device, stream, 0x3F, {id}).empty());
+    CHECK(exchange(device, stream, 0xBF,
+                   {0x34,0xA8,0xA8,uint8_t(0x20 ^ 0xAA),uint8_t(99 ^ 0xAA),0xAA,0xAA}) ==
+          reply(0x80));
+    CHECK(device.getDataset(0x20, raw, length, received) && length == 3 && raw[0] == 99);
+    CHECK(exchange(device, stream, 0x3F, {0x20}) ==
+          reply(0xBF, dataset(0x20, {200,0,0})));
+    CHECK(device.getCurrentRoomTemperature() == 20);
+
+    FakeStream openvStream; KMBusVitotrol openv(&openvStream, 0x38, 1);
+    profile(openv, "openv");
+    CHECK(exchange(openv, openvStream, 0xBF, dataset(0xAD, {1,2})).empty());
+    CHECK(!openv.getDataset(0xAD, raw, length, received));
+    CHECK(exchange(openv, openvStream, 0xBF,
+                   {0x34,0xA8,0xA8,0xA2,0xAB,0xA8}).empty());
+    CHECK(!openv.getDataset(0x08, raw, length, received));
 }
 
 void profilesMigratePendingCommandsAndStatus() {
@@ -328,6 +392,10 @@ void partyTemperatureIsAtomicAndPartOfModeCommand() {
     update.hasMode = true; update.mode = "water";
     CHECK(!device.applyControlUpdate(update));
     update.mode = "party_on"; update.partyRoomTemperature = 22.5f;
+    CHECK(!device.applyControlUpdate(update));
+    update.partyRoomTemperature = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!device.applyControlUpdate(update));
+    update.partyRoomTemperature = std::numeric_limits<float>::infinity();
     CHECK(!device.applyControlUpdate(update));
     update.partyRoomTemperature = 36;
     CHECK(!device.applyControlUpdate(update));
@@ -575,6 +643,60 @@ void parserDoesNotProcessEmbeddedValidFrame() {
     CHECK(Bytes(stream.output.end() - 10, stream.output.end()) == reply(0xB1, {0xF8,0x11}));
 }
 
+void unrelatedFramesAndEchoesOwnTheirPayload() {
+    FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
+    const Bytes embeddedPing = frame(0);
+    const Bytes echo = frame(0xBF, embeddedPing, 1, 0x00, 0x11);
+    stream.feed(Bytes(echo.begin(), echo.end() - 2)); device.loop();
+    CHECK(stream.output.empty() && stream.writeCalls == 0);
+    CHECK(!device.isOnline() && device.getPendingCommandCount() == 1);
+    stream.feed(Bytes(echo.end() - 2, echo.end())); device.loop();
+    CHECK(stream.output.empty() && stream.writeCalls == 0);
+    CHECK(!device.isOnline());
+    const Bytes unrelated[] = {
+        frame(0x00, embeddedPing, 1, 0x11, 0x11),
+        frame(0x00, embeddedPing, 1, 0x11, 0xFF),
+        frame(0x00, embeddedPing, 2, 0x11, 0x00),
+        frame(0x90, embeddedPing, 1, 0x00, 0x00),
+        frame(0x00, embeddedPing, 1, 0x04, 0x00),
+        frame(0x00, embeddedPing, 1, 0x11, 0x04),
+    };
+    for (const Bytes& outer : unrelated) {
+        stream.feed(outer); device.loop();
+        CHECK(stream.output.empty() && stream.writeCalls == 0);
+        CHECK(!device.isOnline() && device.getPendingCommandCount() == 1);
+    }
+    CHECK(device.getMalformedFrameCount() == 0);
+    CHECK(device.getUnknownCommandCount() == 0);
+    CHECK(device.getCrcErrorCount() == 0);
+    CHECK(exchange(device, stream, 0x31, {0xF8}) == reply(0xB1, {0xF8,0x11}));
+    CHECK(device.getPendingCommandCount() == 1 && device.isOnline());
+    CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x20, {200,0,0})));
+    CHECK(device.getPendingCommandCount() == 0);
+}
+
+void corruptOuterFrameCannotFabricateBusGrant() {
+    FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
+    Bytes payload = {0x1D};
+    const Bytes ping = frame(0);
+    payload.insert(payload.end(), ping.begin(), ping.end());
+    Bytes bad = frame(0xBF, payload); bad.back() ^= 1;
+    stream.feed(bad); device.loop();
+    CHECK(stream.output.empty() && stream.writeCalls == 0);
+    CHECK(device.getCrcErrorCount() == 1 && device.getPendingCommandCount() == 1);
+    CHECK(!device.isOnline());
+    stream.feed(Bytes(bad.begin(), bad.end() - 2)); device.loop();
+    CHECK(stream.output.empty() && stream.writeCalls == 0);
+    stream.feed(Bytes(bad.end() - 2, bad.end())); device.loop();
+    CHECK(stream.output.empty() && stream.writeCalls == 0);
+    CHECK(device.getCrcErrorCount() == 2 && device.getPendingCommandCount() == 1);
+    stream.feed(bad); stream.feed(frame(0x31, {0xF8})); device.loop();
+    CHECK(stream.output == reply(0xB1, {0xF8,0x11}));
+    CHECK(device.getCrcErrorCount() == 3 && device.getPendingCommandCount() == 1);
+    CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x20, {200,0,0})));
+    CHECK(device.getPendingCommandCount() == 0);
+}
+
 void schedulingAndOnlineWraparound() {
     FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
     device.loop();
@@ -640,6 +762,7 @@ int main() {
         {"broadcasts and address filtering", broadcastsAndAddressFiltering},
         {"raw datasets and status guards", rawDatasetsAndStatusGuards},
         {"WiFi requests and wrapped writes", wifiDatasetRequestAndWrappedWrite},
+        {"WiFi raw IDs and BF/3F wrappers", wifiRawDatasetRangeAndBothWrapperCommands},
         {"profile migration and own-slot status", profilesMigratePendingCommandsAndStatus},
         {"all modes and independent flags", allModeCommandsAndIndependentFlags},
         {"party temperature atomic mode payload", partyTemperatureIsAtomicAndPartOfModeCommand},
@@ -649,6 +772,8 @@ int main() {
         {"bounded TX retry preserves commands", transportRetryTimeoutKeepsQueuedCommands},
         {"parser noise, CRC, timeout", parserNoiseCrcAndTimeouts},
         {"embedded frame protection", parserDoesNotProcessEmbeddedValidFrame},
+        {"unrelated frames and echoes own payload", unrelatedFramesAndEchoesOwnTheirPayload},
+        {"corrupt outer cannot fabricate grant", corruptOuterFrameCannotFabricateBusGrant},
         {"scheduling and online wraparound", schedulingAndOnlineWraparound},
         {"temperature boundaries and slot three", boundaryTemperaturesAndSlotThree},
     };

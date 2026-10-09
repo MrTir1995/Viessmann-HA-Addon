@@ -115,9 +115,9 @@ docker buildx build \
 Configure through the Home Assistant UI:
 
 - **serial_port**: The serial device (e.g., `/dev/ttyUSB0`)
-- **baud_rate**: Communication speed (9600 for VBUS, 4800 for KW/P300)
-- **protocol**: Protocol type (vbus, kw, p300, km)
-- **serial_config**: Serial settings (8N1 or 8E2)
+- **baud_rate**: Communication speed (9600 for VBUS, 4800 for KW/P300; `km_remote` forces 1200)
+- **protocol**: Protocol type (vbus, kw, p300, km, km_remote)
+- **serial_config**: Serial settings (8N1, 8E1 or 8E2; `km_remote` forces 8E1)
 
 ## Development
 
@@ -168,16 +168,64 @@ g++ -std=c++17 -Wall -Wextra -Ilinux/include \
 /tmp/km-bus-tests
 ```
 
-The HTTP tests use Python's standard library and a pseudo-terminal, with no
-heater attached. Point `VIESSMANN_WEBSERVER` at a natively compiled webserver:
+The HTTP tests use Python's standard library, with a pseudo-terminal for KM-Bus
+and no heater attached. They also check native-host restart refusal and the
+shared restart UI. Build the existing webserver with libmicrohttpd development
+headers installed, then point `VIESSMANN_WEBSERVER` at it:
 
 ```bash
+g++ -std=c++17 -O2 -Wall -Wextra -Ilinux/include -Isrc \
+  webserver/main.cpp src/vbusdecoder.cpp linux/src/LinuxSerial.cpp \
+  linux/src/Arduino.cpp linux/src/KMBusVitotrol.cpp \
+  -lmicrohttpd -lpthread -o /tmp/viessmann_webserver
 VIESSMANN_WEBSERVER=/tmp/viessmann_webserver \
-  python3 -m unittest discover -s linux/tests -p 'test_remote_api.py' -v
+  python3 -m unittest discover -s linux/tests -p 'test_*_api.py' -v
 ```
 
 These tests validate implementation contracts; they do not prove electrical
 compatibility or response timing on a real controller.
+
+The existing Docker restart tests require an already-built add-on image and
+a Docker daemon. They exercise actual container restart rather than a mocked
+process restart; without `VIESSMANN_RESTART_IMAGE` they are skipped:
+
+```bash
+VIESSMANN_RESTART_IMAGE=viessmann-decoder:local \
+  python3 -m unittest discover -s linux/tests -p 'test_restart_api.py' -v
+```
+
+### Container restart lifecycle
+
+The dashboard and settings page share a confirmation button. The JSON-only
+`POST /api/restart` requires exactly `{"confirm":true}` and returns
+`202 {"status":"restarting"}` when queued, not proof of a completed restart.
+`GET /api/system` reports restart availability, pending state, the requirement
+for an external restart manager and a nonsecret process `instance_id`.
+The UI verifies a new instance; observing a disconnect is not required.
+Availability detects the container/startup environment, not its external
+restart policy.
+Native host execution is refused (`503`); duplicate pending requests return
+`409`. Cross-origin browser requests are refused; relative UI URLs preserve
+Ingress support. This is request safety, not authentication: restrict this
+unauthenticated API to trusted networks.
+
+After allowing the response to be sent, the server stops HTTP and serial
+handling and exits with code 75. Since `/run.sh` uses `exec` under tini, the
+container exits too; there is no in-process restart loop. Docker's configured
+restart policy or Home Assistant's **enabled Watchdog** must start it again.
+The supplied Compose and README Docker example use `unless-stopped`.
+Without such a manager the container stays stopped. Do not assume Supervisor
+sets a Docker restart policy: its
+[2025.12.3 watchdog implementation](https://github.com/home-assistant/supervisor/blob/2025.12.3/supervisor/addons/addon.py#L1554-L1640)
+restarts failed/stopped/unhealthy add-ons only when watchdog handling is enabled.
+
+Startup reloads persisted settings; volatile bus logs, received KM datasets,
+queued commands and runtime profile selection are cleared. No Docker socket,
+Supervisor token, host reboot command or new dependency is needed.
+For deployment validation, save a setting, confirm the restart, check that
+the container actually restarted and verify the applied setting after `/health`
+returns. The local `docker run --rm` examples above intentionally have no
+restart manager and are not restart-button validation setups.
 
 ## Dependencies
 

@@ -38,9 +38,9 @@ stage: stable
 image: docker.io/mrtir071/viessmann-decoder-{arch}
 options:
   serial_port: /dev/ttyUSB0
-  baud_rate: 9600
-  protocol: vbus
-  serial_config: 8N1
+  baud_rate: 1200
+  protocol: km_remote
+  serial_config: 8E1
   remote_model: vitotrol300
   remote_slot: 1
   invert_serial: false

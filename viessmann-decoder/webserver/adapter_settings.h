@@ -99,7 +99,7 @@ inline const char* adapterSettingsPanel() {
     const protocol = get('protocol'), baud = get('baud'), config = get('config');
     // Keep the Supervisor ingress prefix on both root and adapter settings pages.
     const path = window.location.pathname;
-    const suffix = /\/(?:adapters\/[A-Za-z0-9_-]+\/)?settings\/?$/;
+    const suffix = /\/(?:adapters\/[A-Za-z0-9_-]+\/)?(?:settings|devices)\/?$/;
     const root = (path.replace(suffix, '') + '/').replace(/^\/+/, '/');
     const endpoint = root + 'api/adapters';
     const protocolNames = ['vbus', 'kw', 'p300', 'km', 'km_remote'];

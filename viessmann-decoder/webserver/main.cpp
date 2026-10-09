@@ -467,6 +467,29 @@ std::string generateRemoteJSON(bool includeDatasets) {
 }
 
 // Generate JSON data response
+std::string jsonQuote(const std::string& value);
+
+std::string busParticipantsJSON(VBUSDecoder* decoder) {
+    std::string participants = "[";
+    if (decoder) {
+        for (uint8_t i = 0; i < decoder->getParticipantCount(); ++i) {
+            const BusParticipant* participant = decoder->getParticipant(i);
+            if (!participant) continue;
+            if (participants.size() > 1) participants += ',';
+            participants += "{\"address\":" + std::to_string(participant->address) +
+                            ",\"name\":" + jsonQuote(participant->name) +
+                            ",\"active\":" + (participant->active ? "true" : "false") +
+                            ",\"auto_detected\":" +
+                            (participant->autoDetected ? "true" : "false") +
+                            ",\"temperature_channels\":" +
+                            std::to_string(participant->tempChannels) +
+                            ",\"pump_channels\":" + std::to_string(participant->pumpChannels) +
+                            ",\"relay_channels\":" + std::to_string(participant->relayChannels) + "}";
+        }
+    }
+    return participants + "]";
+}
+
 char* generateDataJSON() {
     auto& adapter = currentAdapter();
     const auto& config = adapter.options;
@@ -519,7 +542,7 @@ char* generateDataJSON() {
     JSON_APPEND("\"protocol\":%d,", config.protocol);
 
     if (config.protocol == PROTOCOL_KM_REMOTE) {
-        JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[],");
+        JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[],\"participants\":[],");
         const std::string remote = generateRemoteJSON(false);
         JSON_APPEND("\"remote\":%s", remote.c_str());
         pthread_mutex_unlock(&data_mutex);
@@ -528,7 +551,7 @@ char* generateDataJSON() {
     }
 
     if (!serialConnected || !decoder || !deviceCompatible) {
-        JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[]");
+        JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[],\"participants\":[]");
         pthread_mutex_unlock(&data_mutex);
         JSON_APPEND("}");
         return json;
@@ -566,6 +589,8 @@ char* generateDataJSON() {
         }
     }
     JSON_APPEND("]");
+    const std::string participants = busParticipantsJSON(decoder);
+    JSON_APPEND(",\"participants\":%s", participants.c_str());
 
     pthread_mutex_unlock(&data_mutex);
 
@@ -1511,6 +1536,7 @@ const char* getDashboardHTML() {
     "--disabled-text:#9e9e9e;"
     "--card-shadow:0 2px 2px 0 rgba(0,0,0,.14),0 1px 5px 0 rgba(0,0,0,.12),0 3px 1px -2px rgba(0,0,0,.2);"
     "}"
+    ":root[data-theme='dark']{color-scheme:dark;--primary-color:#1565c0;--primary-dark:#0d47a1;--accent-color:#ffb74d;--card-background:#1e1e1e;--primary-background:#121212;--secondary-background:#292929;--primary-text:#f5f5f5;--secondary-text:#bdbdbd;--divider-color:#424242;--error-color:#ef5350;--success-color:#81c784;--warning-color:#ffb74d;--disabled-text:#757575;--card-shadow:0 2px 8px rgba(0,0,0,.45);}"
     "*{margin:0;padding:0;box-sizing:border-box;}"
     "body{font-family:'Roboto','Noto',sans-serif;background:var(--primary-background);color:var(--primary-text);-webkit-font-smoothing:antialiased;}"
     ".app-header{background:var(--primary-color);color:white;padding:0;box-shadow:0 2px 4px rgba(0,0,0,0.2);position:sticky;top:0;z-index:100;}"
@@ -1522,7 +1548,7 @@ const char* getDashboardHTML() {
     ".status-chip{background:var(--card-background);padding:12px 20px;border-radius:16px;box-shadow:var(--card-shadow);display:flex;align-items:center;gap:8px;font-size:14px;}"
     ".status-chip .label{color:var(--secondary-text);font-weight:500;}"
     ".status-chip .value{color:var(--primary-text);font-weight:500;}"
-    ".status-indicator{width:8px;height:8px;border-radius:50%%;background:var(--disabled-text);}"
+    ".status-indicator{width:8px;height:8px;border-radius:50%;background:var(--disabled-text);}"
     ".status-indicator.ok{background:var(--success-color);}"
     ".status-indicator.error{background:var(--error-color);}"
     ".card{background:var(--card-background);border-radius:8px;box-shadow:var(--card-shadow);margin-bottom:24px;overflow:hidden;}"
@@ -1537,17 +1563,44 @@ const char* getDashboardHTML() {
     ".sensor-icon{width:40px;height:40px;margin-bottom:8px;opacity:0.7;}"
     ".empty-state{padding:48px 20px;text-align:center;color:var(--secondary-text);}"
     ".empty-state-icon{font-size:64px;margin-bottom:16px;opacity:0.3;}"
+    ".participant-section{padding:20px;border-top:1px solid var(--divider-color);}"
+    ".participant-section h2{font-size:16px;font-weight:500;margin-bottom:12px;}"
+    ".participant-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}"
+    ".participant-card{background:var(--primary-background);border:1px solid var(--divider-color);border-radius:8px;padding:16px;overflow-wrap:anywhere;}"
+    ".participant-card h3{font-size:16px;margin-bottom:8px;}"
+    ".participant-card p{color:var(--secondary-text);font-size:14px;line-height:1.6;}"
     ".nav-buttons{display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap;}"
     ".nav-button{background:var(--card-background);padding:16px 24px;border-radius:8px;box-shadow:var(--card-shadow);display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--primary-text);transition:all 0.2s;font-weight:500;}"
     ".nav-button:hover{transform:translateY(-2px);box-shadow:0 4px 8px rgba(0,0,0,0.2);background:var(--primary-color);color:white;}"
     ".button-icon{width:24px;height:24px;}"
+    ".theme-toggle{border:1px solid rgba(255,255,255,.65);border-radius:20px;padding:8px 12px;background:transparent;color:white;font-size:14px;cursor:pointer;}"
+    ".theme-toggle:hover{background:rgba(255,255,255,.15);}"
     "@media(max-width:768px){"
     ".view-container{padding:0 16px;margin:16px auto;}"
-    ".header-toolbar{padding:12px 16px;}"
+    ".header-toolbar{padding:12px 16px;gap:12px;}"
+    ".header-title{font-size:18px;}"
     ".sensor-grid{grid-template-columns:1fr;}"
+    ".theme-toggle{font-size:12px;padding:7px 9px;}"
     "}"
     "</style>"
     "<script>"
+    "let themeButton=null;"
+    "function setTheme(theme){document.documentElement.dataset.theme=theme;if(themeButton){themeButton.textContent=theme==='dark'?'Light theme':'Dark theme';themeButton.setAttribute('aria-pressed',theme==='dark'?'true':'false');}}"
+    "try{setTheme(localStorage.getItem('viessmann-decoder-theme')==='dark'?'dark':'light');}catch(error){setTheme('light');}"
+    "window.addEventListener('DOMContentLoaded',()=>{themeButton=document.getElementById('themeToggle');setTheme(document.documentElement.dataset.theme);themeButton.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';setTheme(theme);try{localStorage.setItem('viessmann-decoder-theme',theme);}catch(error){}});});"
+    "function renderParticipants(participants){"
+    "const container=document.getElementById('busParticipants');container.replaceChildren();"
+    "if(!Array.isArray(participants)||participants.length===0){const empty=document.createElement('p');empty.className='empty-state';empty.textContent='No bus participants discovered yet.';container.appendChild(empty);return;}"
+    "const grid=document.createElement('div');grid.className='participant-grid';"
+    "participants.forEach(participant=>{if(!participant||typeof participant!=='object')return;"
+    "const card=document.createElement('article');card.className='participant-card';"
+    "const address=Number(participant.address);"
+    "const title=document.createElement('h3');title.textContent=String(participant.name||'Bus participant')+' · '+(Number.isInteger(address)?'0x'+address.toString(16).toUpperCase().padStart(4,'0'):'');card.appendChild(title);"
+    "const details=document.createElement('p');"
+    "details.textContent=(participant.active?'Active':'Inactive')+' · '+(participant.auto_detected?'Auto-discovered':'Configured')+' · Temperatures: '+Number(participant.temperature_channels||0)+' · Pumps: '+Number(participant.pump_channels||0)+' · Relays: '+Number(participant.relay_channels||0);"
+    "card.appendChild(details);grid.appendChild(card);});"
+    "container.appendChild(grid);"
+    "}"
     "function updateData(){"
     "fetch('data').then(r=>r.json()).then(d=>{"
     "document.getElementById('remoteControls').style.display=d.protocol===4?'flex':'none';"
@@ -1555,6 +1608,7 @@ const char* getDashboardHTML() {
     "const statusText=document.getElementById('statusText');"
     "const protocolText=document.getElementById('protocol');"
     "const container=document.getElementById('sensorData');"
+    "renderParticipants(d.participants);"
     "if(d.serialConnected===false){"
     "statusDot.className='status-indicator error';"
     "statusText.textContent='Serial port not connected';"
@@ -1573,25 +1627,27 @@ const char* getDashboardHTML() {
     "}"
     "let html='';"
     "if(d.temperatures&&d.temperatures.length>0){"
+    "const temperatureNames=d.protocol===3?['Boiler','Hot water','Outdoor','Setpoint','Flow']:[];"
     "d.temperatures.forEach((t,i)=>{"
     "html+='<div class=\"sensor-item\">';"
-    "html+='<div class=\"sensor-label\">Temperature '+(i+1)+'</div>';"
+    "html+='<div class=\"sensor-label\">'+(temperatureNames[i]||'Temperature '+(i+1))+'</div>';"
     "html+='<div class=\"sensor-value\">'+t.toFixed(1)+'<span class=\"sensor-unit\">°C</span></div>';"
     "html+='</div>';"
     "});"
     "}"
     "if(d.pumps&&d.pumps.length>0){"
+    "const pumpNames=d.protocol===3?['Main pump','Hot water pump']:[];"
     "d.pumps.forEach((p,i)=>{"
     "html+='<div class=\"sensor-item\">';"
-    "html+='<div class=\"sensor-label\">Pump '+(i+1)+' Power</div>';"
-    "html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%%</span></div>';"
+    "html+='<div class=\"sensor-label\">'+(pumpNames[i]||'Pump '+(i+1)+' Power')+'</div>';"
+    "html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%</span></div>';"
     "html+='</div>';"
     "});"
     "}"
     "if(d.relays&&d.relays.length>0){"
     "d.relays.forEach((r,i)=>{"
     "html+='<div class=\"sensor-item\">';"
-    "html+='<div class=\"sensor-label\">Relay '+(i+1)+'</div>';"
+    "html+='<div class=\"sensor-label\">'+(d.protocol===3&&i===0?'Burner':'Relay '+(i+1))+'</div>';"
     "html+='<div class=\"sensor-value\" style=\"color:'+(r?'var(--success-color)':'var(--disabled-text)')+'\">'+(r?'ON':'OFF')+'</div>';"
     "html+='</div>';"
     "});"
@@ -1614,6 +1670,7 @@ const char* getDashboardHTML() {
     "</svg>"
     "Viessmann Decoder"
     "</div>"
+    "<button type='button' class='theme-toggle' id='themeToggle' aria-label='Toggle dark theme' aria-pressed='false'>Dark theme</button>"
     "</div>"
     "</div>"
     "<div class='view-container'>"
@@ -1635,7 +1692,7 @@ const char* getDashboardHTML() {
     "</a>"
     "<a href='devices' class='nav-button'>"
     "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M17,13H13V17H11V13H7V11H11V7H13V11H17M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z'/></svg>"
-    "<span>Add Device</span>"
+    "<span>Add Serial Adapter</span>"
     "</a>"
     "<a href='logs' class='nav-button'>"
     "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M4 3h16v18H4V3m3 4v2h10V7H7m0 4v2h10v-2H7m0 4v2h7v-2H7Z'/></svg>"
@@ -1652,6 +1709,7 @@ const char* getDashboardHTML() {
     "<div id='sensorData' class='sensor-grid'>"
     "<div class='empty-state'><div class='empty-state-icon'>⏳</div><div>Loading...</div></div>"
     "</div>"
+    "<div class='participant-section'><h2>Bus participants</h2><div id='busParticipants'><div class='empty-state'>Loading participant data...</div></div></div>"
     "</div>"
     "</div>"
     "</div>"
@@ -1795,6 +1853,7 @@ std::string getSettingsHTML() {
     "--success-color:#4caf50;"
     "--card-shadow:0 2px 2px 0 rgba(0,0,0,.14),0 1px 5px 0 rgba(0,0,0,.12),0 3px 1px -2px rgba(0,0,0,.2);"
     "}"
+    ":root[data-theme='dark']{color-scheme:dark;--primary-color:#1565c0;--card-background:#1e1e1e;--primary-background:#121212;--primary-text:#f5f5f5;--secondary-text:#bdbdbd;--divider-color:#424242;--success-color:#81c784;--card-shadow:0 2px 8px rgba(0,0,0,.45);}"
     "*{margin:0;padding:0;box-sizing:border-box;}"
     "body{font-family:'Roboto','Noto',sans-serif;background:var(--primary-background);color:var(--primary-text);}"
     ".app-header{background:var(--primary-color);color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2);}"
@@ -1809,15 +1868,16 @@ std::string getSettingsHTML() {
     ".form-group{padding:20px;border-bottom:1px solid var(--divider-color);}"
     ".form-group:last-child{border-bottom:none;}"
     ".form-label{font-size:14px;color:var(--secondary-text);margin-bottom:8px;display:block;}"
-    ".form-control{width:100%%;padding:12px;border:1px solid var(--divider-color);border-radius:4px;font-size:14px;}"
+    ".form-control{width:100%%;padding:12px;border:1px solid var(--divider-color);border-radius:4px;font-size:14px;background:var(--card-background);color:var(--primary-text);}"
     ".form-control:focus{outline:none;border-color:var(--primary-color);}"
-    ".form-select{width:100%%;padding:12px;border:1px solid var(--divider-color);border-radius:4px;font-size:14px;background:white;}"
+    ".form-select{width:100%%;padding:12px;border:1px solid var(--divider-color);border-radius:4px;font-size:14px;background:var(--card-background);color:var(--primary-text);}"
     ".button-group{padding:20px;display:flex;gap:12px;justify-content:flex-end;}"
     ".btn{padding:12px 24px;border:none;border-radius:4px;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;}"
     ".btn-primary{background:var(--primary-color);color:white;}"
     ".btn-primary:hover{background:#0288d1;}"
     ".btn-secondary{background:var(--divider-color);color:var(--primary-text);}"
     ".btn-secondary:hover{background:#ccc;}"
+    ".theme-toggle{margin-left:auto;border:1px solid rgba(255,255,255,.65);border-radius:20px;padding:8px 12px;background:transparent;color:white;cursor:pointer;}"
     "@media(max-width:768px){.view-container{padding:0 16px;margin:16px auto;}}"
     "</style>"
     "</head><body>"
@@ -1827,6 +1887,7 @@ std::string getSettingsHTML() {
     "<svg class='back-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z'/></svg>"
     "</a>"
     "<div class='header-title'>Settings</div>"
+    "<button type='button' class='theme-toggle' id='themeToggle' aria-label='Toggle dark theme' aria-pressed='false'>Dark theme</button>"
     "</div>"
     "</div>"
     "<div class='view-container'>"
@@ -1894,6 +1955,10 @@ std::string getSettingsHTML() {
     "</div>"
     "</div>"
     "<script>"
+    "let themeButton=null;"
+    "function setTheme(theme){document.documentElement.dataset.theme=theme;if(themeButton){themeButton.textContent=theme==='dark'?'Light theme':'Dark theme';themeButton.setAttribute('aria-pressed',theme==='dark'?'true':'false');}}"
+    "try{setTheme(localStorage.getItem('viessmann-decoder-theme')==='dark'?'dark':'light');}catch(error){setTheme('light');}"
+    "window.addEventListener('DOMContentLoaded',()=>{themeButton=document.getElementById('themeToggle');setTheme(document.documentElement.dataset.theme);themeButton.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';setTheme(theme);try{localStorage.setItem('viessmann-decoder-theme',theme);}catch(error){}});});"
     "const settingsForm=document.getElementById('settingsForm');"
     "const settingsMessage=document.getElementById('settingsMessage');"
     "document.getElementById('protocol').addEventListener('change',event=>{"
@@ -2382,9 +2447,10 @@ static MHD_Result handle_request(void *cls,
         return ret;
     }
     else if (strcmp(url, "/devices") == 0) {
-        const char* html = getDevicesHTML();
-        response = MHD_create_response_from_buffer(strlen(html),
-                                                   (void*)html,
+        std::string html = getSettingsHTML();
+        html.insert(html.find("</body>"), getRestartHTML());
+        response = MHD_create_response_from_buffer(html.size(),
+                                                   (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);

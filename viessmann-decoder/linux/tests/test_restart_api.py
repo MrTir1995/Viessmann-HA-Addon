@@ -122,7 +122,7 @@ class HostRestartTests(RestartRequests, unittest.TestCase):
             self.assertIn("Container neu starten", html)
             self.assertIn("window.confirm(", html)
             script = next(script for script in re.findall(
-                r"<script>(.*?)</script>", html, re.S
+                r"<script>(.*?)</script>", html, re.S | re.I
             ) if "waitForContainer" in script)
             self.assertIn("restartButton.disabled=!system.restart_supported", script)
             self.assertIn("restartFetch('api/restart'", script)
@@ -175,7 +175,7 @@ async function scenario(changes,disconnect){
     def test_party_command_uses_applied_profile_and_preserves_edits(self):
         html = self.request("/remote")[1].decode()
         self.assertIn("Partytemperatur ist nur", html)
-        script = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
+        script = re.search(r"<script>(.*?)</script>", html, re.S | re.I).group(1)
         fixture = r"""
 const vm=require('vm'),assert=require('assert'),fs=require('fs');
 const script=fs.readFileSync(0,'utf8');

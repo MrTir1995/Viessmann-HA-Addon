@@ -72,11 +72,13 @@ int LinuxSerial::read() {
         data = ~data;  // Bitwise NOT (XOR 0xFF)
     }
     
+    if (trafficCallback) trafficCallback(false, &data, 1);
     return data;
 }
 
 size_t LinuxSerial::write(uint8_t data) {
     if (fd < 0) return 0;
+    const uint8_t logicalData = data;
     
     // Invert signal if enabled (for M-Bus/KM-Bus adapters with inverted logic)
     if (invertSignal) {
@@ -84,6 +86,7 @@ size_t LinuxSerial::write(uint8_t data) {
     }
     
     ssize_t n = ::write(fd, &data, 1);
+    if (n > 0 && trafficCallback) trafficCallback(true, &logicalData, static_cast<size_t>(n));
     return (n > 0) ? n : 0;
 }
 
@@ -98,10 +101,12 @@ size_t LinuxSerial::write(const uint8_t *buffer, size_t size) {
         }
         ssize_t n = ::write(fd, inverted, size);
         delete[] inverted;
+        if (n > 0 && trafficCallback) trafficCallback(true, buffer, static_cast<size_t>(n));
         return (n > 0) ? n : 0;
     }
     
     ssize_t n = ::write(fd, buffer, size);
+    if (n > 0 && trafficCallback) trafficCallback(true, buffer, static_cast<size_t>(n));
     return (n > 0) ? n : 0;
 }
 

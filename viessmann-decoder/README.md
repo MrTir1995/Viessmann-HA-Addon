@@ -91,6 +91,23 @@ Installation und Einrichtung: [INTEGRATION.md](INTEGRATION.md#custom-integration
 
 ## 🎯 Supported Devices
 
+### Bus-Kommunikationslogs
+
+Der Button **Bus-Logs** neben **Add Device** im Dashboard öffnet die neue
+Log-Seite (`logs`). Sie zeigt empfangene (RX) und erfolgreich gesendete (TX)
+Bytes aller unterstützten Busprotokolle als Hexadezimaldaten mit Zeitstempel.
+Bei aktivierter Signalinvertierung werden die logischen, nicht die invertierten
+Leitungsbytes angezeigt. Byte-Gruppen entsprechen nicht zwingend Protokollrahmen.
+
+Die Anzeige aktualisiert sich alle zwei Sekunden. **Anzeige pausieren** hält
+nur die Darstellung an; die Aufzeichnung läuft weiter. Automatisches Scrollen
+kann deaktiviert werden. Ohne Busverkehr erscheint ein entsprechender Hinweis.
+Die letzten 500 Einträge mit jeweils höchstens 32 Bytes werden ausschließlich
+im Arbeitsspeicher gehalten; ältere Einträge werden verworfen und ein Neustart
+löscht die Logs. Auch Verkehr während der Verbindungserkennung wird erfasst.
+Die Text-API ist unter `api/bus-logs` erreichbar; Navigation und API funktionieren
+auch über Home Assistant Ingress.
+
 ### VBUS Protocol Devices
 
 - ✅ Viessmann Vitosolic 200 solar controllers

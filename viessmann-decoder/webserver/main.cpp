@@ -25,6 +25,10 @@
 #include <string>
 #include <unordered_set>
 #include <cmath>
+#include <chrono>
+#include <deque>
+#include <mutex>
+#include <ctime>
 #include "KMBusVitotrol.h"
 #include "LinuxSerial.h"
 #include "vbusdecoder.h"
@@ -58,6 +62,57 @@ KMBusVitotrol* vitotrol = nullptr;
 Config config;
 pthread_mutex_t data_mutex = PTHREAD_MUTEX_INITIALIZER;
 std::string activeSerialPort;
+
+struct BusLogEntry {
+    std::chrono::system_clock::time_point timestamp;
+    bool transmitted;
+    std::vector<uint8_t> bytes;
+};
+
+constexpr size_t MAX_BUS_LOG_ENTRIES = 500;
+constexpr size_t MAX_BUS_LOG_BYTES = 32;
+std::deque<BusLogEntry> busLogs;
+std::mutex busLogMutex;
+
+void recordBusTraffic(bool transmitted, const uint8_t* data, size_t size) {
+    const auto now = std::chrono::system_clock::now();
+    std::lock_guard<std::mutex> lock(busLogMutex);
+    for (size_t i = 0; i < size; ++i) {
+        // Group nearby bytes for readability, not as a protocol frame boundary.
+        if (busLogs.empty() || busLogs.back().transmitted != transmitted ||
+            busLogs.back().bytes.size() >= MAX_BUS_LOG_BYTES ||
+            now - busLogs.back().timestamp >= std::chrono::milliseconds(10)) {
+            if (busLogs.size() >= MAX_BUS_LOG_ENTRIES) busLogs.pop_front();
+            busLogs.push_back({now, transmitted, {}});
+        }
+        busLogs.back().bytes.push_back(data[i]);
+    }
+}
+
+std::string generateBusLogs() {
+    std::lock_guard<std::mutex> lock(busLogMutex);
+    std::string logs;
+    for (const auto& entry : busLogs) {
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+            entry.timestamp.time_since_epoch()).count();
+        const time_t seconds = milliseconds / 1000;
+        struct tm timestamp;
+        localtime_r(&seconds, &timestamp);
+        char date[32];
+        strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &timestamp);
+        char prefix[48];
+        snprintf(prefix, sizeof(prefix), "%s.%03d %s  ", date,
+                 static_cast<int>(milliseconds % 1000), entry.transmitted ? "TX" : "RX");
+        logs += prefix;
+        for (uint8_t byte : entry.bytes) {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%02X ", byte);
+            logs += hex;
+        }
+        logs += '\n';
+    }
+    return logs;
+}
 
 // Signal handler
 void signalHandler(int signum) {
@@ -751,6 +806,10 @@ const char* getDashboardHTML() {
     "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M17,13H13V17H11V13H7V11H11V7H13V11H17M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z'/></svg>"
     "<span>Add Device</span>"
     "</a>"
+    "<a href='logs' class='nav-button'>"
+    "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M4 3h16v18H4V3m3 4v2h10V7H7m0 4v2h10v-2H7m0 4v2h7v-2H7Z'/></svg>"
+    "<span>Bus-Logs</span>"
+    "</a>"
     "</div>"
     "<div class='card'>"
     "<div class='card-header'>"
@@ -1164,6 +1223,65 @@ const char* getDevicesHTML() {
     return html;
 }
 
+const char* getBusLogsHTML() {
+    return R"HTML(<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viessmann Decoder - Bus-Logs</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Roboto,Noto,sans-serif;background:#fafafa;color:#212121}
+header{background:#03a9f4;color:white;padding:16px 24px;box-shadow:0 2px 4px #0003}
+header nav{max-width:1152px;margin:auto;display:flex;align-items:center;gap:24px}
+header a{color:white;text-decoration:none}
+h1{font-size:20px;font-weight:400;margin:0}
+main{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:white;border-radius:8px;padding:20px;box-shadow:0 2px 5px #0003}
+.controls{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+button{background:#03a9f4;color:white;border:0;border-radius:4px;padding:10px 16px;cursor:pointer}
+pre{background:#212121;color:#e0e0e0;padding:16px;border-radius:4px;overflow:auto;max-height:65vh;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+#status{color:#727272}
+@media(max-width:768px){main{padding:0 16px}}
+</style></head><body>
+<header><nav><a href=".">← Dashboard</a><h1>Bus-Logs</h1></nav></header>
+<main><div class="card">
+<p>Bus-Kommunikation: RX = empfangen, TX = gesendet. Anzeige als Hexadezimaldaten mit Zeitstempel.</p>
+<p>Die letzten 500 Einträge bleiben bis zum Neustart im Arbeitsspeicher.
+Byte-Gruppen sind keine Protokollrahmen; bei Signalinvertierung werden die logischen Bytes angezeigt.</p>
+<div class="controls"><button id="pause" type="button">Anzeige pausieren</button>
+<label><input id="follow" type="checkbox" checked> Automatisch scrollen</label></div>
+<p id="status" role="status">Logs werden geladen…</p>
+<pre id="logs">Noch keine Bus-Kommunikation aufgezeichnet.</pre>
+</div></main>
+<script>
+const logs=document.getElementById('logs'),status=document.getElementById('status');
+const pause=document.getElementById('pause'),follow=document.getElementById('follow');
+let paused=false;
+pause.onclick=()=>{
+    paused=!paused;
+    pause.textContent=paused?'Anzeige fortsetzen':'Anzeige pausieren';
+    status.textContent=paused?'Anzeige pausiert; Aufzeichnung läuft weiter.':'Live-Anzeige aktiv.';
+};
+async function refresh(){
+    try{
+        if(!paused){
+            const response=await fetch('api/bus-logs',{cache:'no-store'});
+            if(!response.ok)throw new Error('HTTP '+response.status);
+            const text=await response.text();
+            if(!paused){
+                logs.textContent=text||'Noch keine Bus-Kommunikation aufgezeichnet.';
+                status.textContent='Live-Anzeige aktiv · Aktualisierung alle 2 Sekunden';
+                if(follow.checked)logs.scrollTop=logs.scrollHeight;
+            }
+        }
+    }catch(error){
+        if(!paused)status.textContent='Logs konnten nicht geladen werden. Erneuter Versuch folgt.';
+    }finally{setTimeout(refresh,2000);}
+}
+refresh();
+</script></body></html>)HTML";
+}
+
 // HTTP request handler
 static MHD_Result handle_request(void *cls,
                                  struct MHD_Connection *connection,
@@ -1182,6 +1300,24 @@ static MHD_Result handle_request(void *cls,
     }
     if (strcmp(url, "/api/settings") == 0) {
         return handleSettingsApi(connection, method, upload_data_size, upload_data, con_cls);
+    }
+    if (strcmp(url, "/logs") == 0 || strcmp(url, "/api/bus-logs") == 0) {
+        if (strcmp(method, "GET") != 0) {
+            return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
+                             "{\"error\":\"Use GET\"}");
+        }
+        const bool isPage = strcmp(url, "/logs") == 0;
+        const std::string body = isPage ? getBusLogsHTML() : generateBusLogs();
+        response = MHD_create_response_from_buffer(body.size(), (void*)body.data(),
+                                                   MHD_RESPMEM_MUST_COPY);
+        if (!response) return MHD_NO;
+        MHD_add_response_header(response, "Content-Type",
+                                isPage ? "text/html; charset=utf-8" : "text/plain; charset=utf-8");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
+        MHD_add_response_header(response, "X-Content-Type-Options", "nosniff");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+        MHD_destroy_response(response);
+        return ret;
     }
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/remote") == 0) {
         const char* html =
@@ -1381,6 +1517,7 @@ int main(int argc, char* argv[]) {
     printf("\n");
 
     // Try to initialize serial port (don't exit on failure)
+    vbusSerial.setTrafficCallback(recordBusTraffic);
     bool connected = false;
     for (const auto& port : discoverSerialPorts()) {
         printf("Attempting to connect on %s...\n", port.c_str());

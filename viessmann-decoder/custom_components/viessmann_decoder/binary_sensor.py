@@ -31,7 +31,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         if data["protocol"] == 4:
             for key in ("controller_fault", "heating_enabled", "communication_problem"):
                 if key not in discovered and (
-                    key in data["remote"]
+                    key == "controller_fault"
+                    or key in data["remote"]
                     or (key == "communication_problem" and all(
                         field in data["remote"] for field in REMOTE_COUNTERS[1:]
                     ))
@@ -105,6 +106,20 @@ class DecoderRemoteBinarySensor(DecoderEntity, BinarySensorEntity):
         if self._key == "communication_problem":
             return all(field in remote for field in REMOTE_COUNTERS[1:])
         return received_status_available(remote, self._key)
+
+    @property
+    def extra_state_attributes(self):
+        if self._key != "controller_fault":
+            return None
+        remote = (self.coordinator.data or {}).get("remote", {})
+        verified = (
+            remote.get("measurements_verified") is True
+            and isinstance(remote.get("controller_fault"), bool)
+        )
+        return {
+            "mapping_status": "verified" if verified else "unverified",
+            "source_field": "controller_fault",
+        }
 
     @property
     def is_on(self):

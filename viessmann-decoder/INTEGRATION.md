@@ -111,8 +111,20 @@ Kommunikationsproblem wird bei fehlender Verbindung/Busbereitschaft/Onlinezustan
 oder nicht-null Fehlerzählern aktiv; historische Zähler können es aktiv halten.
 Es ist **keine Heizungsstörung** und enthält keine erfundenen Fehlercodes.
 
-Die reale Heizungsstörung (`controller_fault`) bleibt bei `null` nicht verfügbar,
-bis eine verifizierte Zuordnung vorliegt. Empfangene Außentemperatur und Heizfreigabe
+Der Binärsensor **Sammelstörung** (`controller_fault`, englisch „Collective fault“)
+wird im `km_remote`-Modus immer angelegt, auch wenn ältere APIs das Feld noch nicht
+liefern. Seine eindeutige ID (`<Eintrags-ID>_remote_controller_fault`) bleibt
+unverändert. Er zeigt eine Heizungsstörung ohne Auslesen einzelner Fehlercodes:
+**Ein** bedeutet Störung, **Aus** bedeutet keine Störung – ausschließlich bei
+verifiziertem booleschem Wert (`measurements_verified: true`), einem höchstens
+180000 ms alten Statusdatensatz und aktiver, kompatibler, busbereiter
+Onlineverbindung. Bei fehlendem Feld, `null`, unbestätigter Zuordnung, fehlender
+Altersangabe, veralteten Daten oder Verbindungsausfall bleibt er **nicht verfügbar**,
+nicht „Aus“. Die Attribute `source_field: controller_fault` und
+`mapping_status: unverified` erklären die noch offene Zuordnung; erst ein
+verifizierter boolescher Wert setzt `mapping_status: verified`. Dieses Attribut
+ersetzt nicht die Prüfung der Aktualität und Verfügbarkeit.
+Empfangene Außentemperatur und Heizfreigabe
 werden nur bei `measurements_verified: true`, einem nicht-null Wert und einem
 Statusdatensatzalter von höchstens 180000 ms verfügbar. Fehlt die Altersangabe,
 bleiben sie ebenfalls nicht verfügbar. Aktuell ist die Zuordnung nicht bewiesen:
@@ -125,6 +137,13 @@ keine Messwert-Entitäten an. `/data` und `/api/remote` liefern derzeit
 `outside_temperature`, `heating_enabled` und `controller_fault` als `null` sowie
 `measurements_verified: false`. Ohne vollständig verifizierte Zuordnung bleiben
 die zugehörigen realen Messwerte und Heizungsstörungen nicht verfügbar.
+
+Für die spätere verifizierte Zuordnung können reale Mitschnitte bei einer
+Wartung bereitgestellt werden: Zeitstempel (mit Zeitzone), Adapter-ID, Slot und
+Profil sowie die zugehörige Anzeige am Heizungsregler dokumentieren und rohe
+Buslogs vor, während und nach dem beobachteten Störungszustand beilegen.
+Bis diese Zuordnung belegt ist, wird kein Störungsbit angenommen; ein
+Kommunikationsproblem wird niemals als Sammelstörung gewertet.
 
 Die folgenden REST-/Template-Beispiele sind eine manuelle Alternative. Nicht
 zusätzlich für dieselben Messwerte einrichten, wenn die Custom Integration bereits

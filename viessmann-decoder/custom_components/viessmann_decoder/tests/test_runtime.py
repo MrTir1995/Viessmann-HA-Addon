@@ -218,15 +218,15 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.publish(payload())
         self.assertEqual(len(entities), 13)
         self.coordinator.publish(payload(4))
-        self.assertEqual(len(entities), 20)
+        self.assertEqual(len(entities), 21)
         self.coordinator.publish(payload(4))
-        self.assertEqual(len(entities), 20)
-        self.assertEqual(len({entity._attr_unique_id for entity in entities}), 20)
+        self.assertEqual(len(entities), 21)
+        self.assertEqual(len({entity._attr_unique_id for entity in entities}), 21)
         self.assertEqual(len(self.coordinator.listeners), 2)
         self.entry.unload()
         self.assertEqual(self.coordinator.listeners, [])
         self.coordinator.publish({**payload(), "temperatures": [1, 2, 3]})
-        self.assertEqual(len(entities), 20)
+        self.assertEqual(len(entities), 21)
 
     async def test_failed_updates_do_not_discover_channels(self):
         self.coordinator.data = {**payload(), "temperatures": [], "pumps": [], "relays": []}
@@ -707,6 +707,64 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                         await entity.async_set_native_value(value)
         session.post.assert_not_called()
 
+    async def test_collective_fault_discovered_without_api_field_and_identity_preserved(self):
+        self.coordinator.data = payload(4)
+        entities = await self.add_platforms()
+        fault = next(e for e in entities if e._attr_unique_id == "entry_one_remote_controller_fault")
+        self.assertEqual(fault._attr_translation_key, "remote_controller_fault")
+        self.assertEqual(fault._attr_device_class, "problem")
+        self.assertFalse(fault.available)
+        self.assertIsNone(fault.is_on)
+        self.assertEqual(
+            fault.extra_state_attributes,
+            {"mapping_status": "unverified", "source_field": "controller_fault"},
+        )
+        self.coordinator.publish(extended_payload())
+        self.assertEqual(
+            [e for e in entities if e._attr_unique_id == fault._attr_unique_id], [fault]
+        )
+        for e in entities:
+            if isinstance(e, self.binary_sensor.DecoderRemoteBinarySensor) and e is not fault:
+                self.assertIsNone(e.extra_state_attributes)
+        for filename, name in (
+            ("strings.json", "Collective fault"),
+            ("translations/en.json", "Collective fault"),
+            ("translations/de.json", "Sammelstörung"),
+        ):
+            translations = json.loads((ROOT / filename).read_text())
+            self.assertEqual(
+                translations["entity"]["binary_sensor"]["remote_controller_fault"]["name"], name
+            )
+
+    async def test_collective_fault_verified_values_and_mapping_attributes(self):
+        self.coordinator.data = extended_payload()
+        entities = await self.add_platforms()
+        fault = next(e for e in entities if e._attr_unique_id.endswith("remote_controller_fault"))
+        remote = self.coordinator.data["remote"]
+        remote["status_dataset_age_ms"] = 0
+        for verified in (None, False, True):
+            for value in (None, False, True):
+                with self.subTest(verified=verified, value=value):
+                    remote.update(measurements_verified=verified, controller_fault=value)
+                    expected = verified is True and value is not None
+                    self.assertEqual(fault.available, expected)
+                    self.assertEqual(
+                        fault.extra_state_attributes["mapping_status"],
+                        "verified" if expected else "unverified",
+                    )
+                    self.assertIs(fault.is_on, value)
+        del remote["measurements_verified"]
+        self.assertFalse(fault.available)
+        self.assertEqual(fault.extra_state_attributes["mapping_status"], "unverified")
+        remote["measurements_verified"] = True
+        del remote["controller_fault"]
+        self.assertFalse(fault.available)
+        self.assertIsNone(fault.is_on)
+        self.assertEqual(fault.extra_state_attributes["mapping_status"], "unverified")
+        remote["controller_fault"] = True
+        self.coordinator.last_update_success = False
+        self.assertFalse(fault.available)
+
     async def test_received_measurements_null_unverified_and_stale(self):
         self.coordinator.data = extended_payload()
         entities = await self.add_platforms()
@@ -762,14 +820,20 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data = extended_payload()
         entities = await self.add_platforms()
         problem = next(e for e in entities if e._attr_unique_id.endswith("remote_communication_problem"))
+        fault = next(e for e in entities if e._attr_unique_id.endswith("remote_controller_fault"))
+        self.assertIsNone(problem.extra_state_attributes)
         self.assertTrue(problem.available)
         self.assertFalse(problem.is_on)
+        self.assertFalse(fault.available)
+        self.assertIsNone(fault.is_on)
         remote = self.coordinator.data["remote"]
         for field in ("crc_errors", "malformed_frames", "unknown_commands"):
             diagnostic = next(e for e in entities if e._attr_unique_id.endswith(f"remote_{field}"))
             remote[field] = 2
             self.assertEqual(diagnostic.native_value, 2)
             self.assertTrue(problem.is_on)
+            self.assertFalse(fault.available)
+            self.assertIsNone(fault.is_on)
             remote[field] = 0
             self.assertFalse(problem.is_on)
         remote["pending_commands"] = 2

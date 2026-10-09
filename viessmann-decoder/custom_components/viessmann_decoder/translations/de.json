@@ -43,7 +43,7 @@
       "data_ready": {"name": "Daten bereit"},
       "compatibility": {"name": "Gerät kompatibel"},
       "remote_online": {"name": "Fernbedienung online"},
-      "remote_controller_fault": {"name": "Verifizierte Heizungsstörung"},
+      "remote_controller_fault": {"name": "Sammelstörung"},
       "remote_heating_enabled": {"name": "Verifizierte empfangene Heizfreigabe"},
       "remote_communication_problem": {"name": "Kommunikationsproblem (keine Heizungsstörung)"}
     },

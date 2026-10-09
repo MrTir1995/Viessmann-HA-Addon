@@ -76,11 +76,6 @@ const char* getProtocolName(uint8_t protocol) {
     }
 }
 
-if (config.protocol == PROTOCOL_KM_REMOTE) {
-    config.baudRate = 1200;
-    config.serialConfig = SERIAL_8E1;
-}
-
 ProtocolType parseProtocol(const char* str) {
     if (strcasecmp(str, "vbus") == 0) return PROTOCOL_VBUS;
     if (strcasecmp(str, "kw") == 0) return PROTOCOL_KW;
@@ -1170,6 +1165,11 @@ int main(int argc, char* argv[]) {
                 printHelp(argv[0]);
                 return 1;
         }
+    }
+
+    if (config.protocol == PROTOCOL_KM_REMOTE) {
+        config.baudRate = 1200;
+        config.serialConfig = SERIAL_8E1;
     }
 
     // Setup signal handlers

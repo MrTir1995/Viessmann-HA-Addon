@@ -10,7 +10,7 @@ log_warning() { echo "[WARNING] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
 log_info "======================================"
-log_info " Viessmann Decoder Add-on v2.2.0"
+log_info " Viessmann Decoder Add-on v2.2.1"
 log_info "======================================"
 
 # Read configuration from options.json

@@ -2,6 +2,14 @@
 
 All notable changes to the Viessmann Decoder Home Assistant Add-on will be documented in this file.
 
+## [2.2.1] - 2026-10-09
+
+### Fixed
+- Hardened VBUS frame parsing against incomplete reads and oversized frames.
+- Corrected frame-boundary and CRC handling to preserve queued datagrams.
+- Serialized decoder access in the webserver and avoided recursive locking during KM-Bus polling.
+- Added KM-Bus status polling during compatibility checks.
+
 ## [2.1.3] - 2026-01-18
 
 ### Fixed

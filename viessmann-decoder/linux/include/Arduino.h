@@ -23,6 +23,7 @@ typedef uint8_t byte;
 // Parity: 00=None, 10=Even, 11=Odd
 // Stop bits: 00=1, 01=2
 #define SERIAL_8N1 0x00  // 8 data, no parity, 1 stop bit
+#define SERIAL_8E1 0x08  // 8 data, even parity, 1 stop bit
 #define SERIAL_8E2 0x18  // 8 data, even parity (10), 2 stop bits (01)
 
 // Stream base class for serial communication

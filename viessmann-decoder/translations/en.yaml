@@ -8,7 +8,7 @@ configuration:
   baud_rate:
     name: Baud Rate
     description: >-
-      Communication speed for your protocol. Use 9600 for VBUS, 4800 for KW-Bus/P300/KM-Bus.
+      Communication speed for your protocol. KM-Bus Vitotrol emulation requires 1200 baud.
   protocol:
     name: Protocol
     description: >-
@@ -24,6 +24,7 @@ configuration:
       Serial port configuration (data bits, parity, stop bits).
     items:
       8N1: "8N1 (8 data bits, no parity, 1 stop bit) - for VBUS, KM-Bus"
+      8E1: "8E1 (8 data bits, even parity, 1 stop bit) - for KM-Bus"
       8E2: "8E2 (8 data bits, even parity, 2 stop bits) - for KW-Bus, P300"
   invert_serial:
     name: Invert Serial Signals

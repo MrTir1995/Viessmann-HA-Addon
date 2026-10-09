@@ -207,53 +207,13 @@ void KMBusVitotrol::parseFrames() {
             continue;
         }
         const uint16_t length = _frame[3];
-        const uint8_t command = _frame[2];
-        const bool addressed = _frameLength >= 6 &&
-            (_frame[0] == 0x11 || _frame[0] == 0xFF) && _frame[1] == 0 &&
-            (_frame[4] == _slot || _frame[4] == 0);
-        const bool impossibleLength = addressed && (
-            (command == 0x00 && length != 8) ||
-            (command == 0x31 && length != 9) ||
-            ((command == 0x33 || command == 0xB1) && length != 10) ||
-            (command == 0xB3 && length < 10) ||
-            (command == 0xBF && (length < 9 || length > (_openv ? 38 : 41))) ||
-            (command == 0x3F && (length < 9 || length > 41)));
-        if (length < 8 || impossibleLength) {
+        if (length < 8) {
             ++_malformedFrames;
             discardBytes(1);
             continue;
         }
-        // Reject impossible partial headers without waiting for their claimed length.
-        // Otherwise an uncorrupted outer frame owns its payload, even if that payload
-        // contains a complete CRC-valid telegram.
-        bool impossiblePayload = false;
-        if (addressed && _frameLength >= 7) {
-            if (command == 0xB3 && ((length - 8) & 1))
-                impossiblePayload = uint16_t(_frame[6]) * 2 + 9 != length;
-            if (command == 0xBF) {
-                const uint8_t id = _frame[6];
-                if (!_openv && id == 0x34) {
-                    impossiblePayload = length < 12;
-                    if (_frameLength >= 10) {
-                        const uint8_t innerId = _frame[9] ^ XOR_MASK;
-                        impossiblePayload = impossiblePayload ||
-                            innerId >= DATASET_STORAGE_SIZE ||
-                            (innerId == datasetId(ROOM) && length != 15);
-                    }
-                } else {
-                    impossiblePayload = length > 38 || id >= DATASET_STORAGE_SIZE ||
-                        (_openv && (id < 0x10 || id > 0x22)) ||
-                        (id == datasetId(ROOM) && length != 12);
-                }
-            }
-            if (command == 0x3F && length > 9 && _frame[6] == 0x34)
-                impossiblePayload = length < 12;
-        }
-        if (impossiblePayload) {
-            ++_malformedFrames;
-            discardBytes(1);
-            continue;
-        }
+        // Validate commands only after owning the complete framed payload. Even
+        // semantic errors must not expose embedded telegrams as fresh bus grants.
         if (_frameLength < length) return;
         const uint16_t received = uint16_t(_frame[length - 2]) |
                                   (uint16_t(_frame[length - 1]) << 8);

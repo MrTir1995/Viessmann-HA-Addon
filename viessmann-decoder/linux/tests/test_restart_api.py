@@ -171,6 +171,59 @@ async function scenario(changes,disconnect){
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    @unittest.skipUnless(shutil.which("node"), "Node required for frontend contract")
+    def test_party_command_uses_applied_profile_and_preserves_edits(self):
+        html = self.request("/remote")[1].decode()
+        self.assertIn("Partytemperatur ist nur", html)
+        script = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
+        fixture = r"""
+const vm=require('vm'),assert=require('assert'),fs=require('fs');
+const script=fs.readFileSync(0,'utf8');
+async function scenario(profile){
+ const elements=new Map(),posts=[];let finishPost;
+ const element=id=>{
+  if(!elements.has(id))elements.set(id,{value:'',disabled:false,textContent:'',
+   addEventListener:(event,callback)=>{element(id)[event]=callback;}});
+  return elements.get(id);
+ };
+ const data={profile,model:'Vitotrol 300',slot:1,online:true,room_temperature:20,
+  desired_room_temperature:21,reduced_room_temperature:17,party_room_temperature:22,
+  mode:202,requested_party_mode:false,requested_economy_mode:false,pending_commands:0,
+  crc_errors:0,malformed_frames:0,unknown_commands:0,outside_temperature:null,
+  heating_enabled:null,datasets:[]};
+ const context={document:{getElementById:element,activeElement:null},setTimeout:()=>1,
+  fetch:async(path,options={})=>{
+   assert.equal(path,'api/remote');
+   if(options.method==='POST'){
+    posts.push(JSON.parse(options.body));
+    return await new Promise(resolve=>{finishPost=()=>resolve({ok:true,json:async()=>({})});});
+   }
+   return {ok:true,json:async()=>({...data})};
+  }};
+ vm.runInNewContext(script,context);await context.refresh();
+ assert.equal(element('party').disabled,profile==='openv');
+ // An edited but unapplied dropdown must not select the command dialect.
+ element('profile').value=profile==='wifi'?'openv':'wifi';element('profile').input();
+ element('party').value='24';element('party').input();
+ element('mode').value='party_on';element('mode').input();
+ element('modeForm').onsubmit({preventDefault:()=>{}});
+ assert.equal(posts.length,1);assert.equal(posts[0].mode,'party_on');
+ if(profile==='wifi')assert.equal(posts[0].party_room_temperature,24);
+ else assert.ok(!Object.hasOwn(posts[0],'party_room_temperature'));
+ // Edits made while the POST is in flight retain their newer revision.
+ element('party').value='25';element('party').input();
+ element('mode').value='economy_on';element('mode').input();
+ finishPost();for(let i=0;i<20;i++)await Promise.resolve();
+ assert.equal(element('party').value,'25');assert.equal(element('mode').value,'economy_on');
+ assert.equal(element('profile').value,profile==='wifi'?'openv':'wifi');
+ assert.equal(element('party').disabled,profile==='openv');
+}
+(async()=>{await scenario('wifi');await scenario('openv');})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+        result = subprocess.run(["node", "-e", fixture], input=script, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 @unittest.skipUnless(os.environ.get("VIESSMANN_RESTART_IMAGE"), "Set VIESSMANN_RESTART_IMAGE")
 class DockerRestartTests(RestartRequests, unittest.TestCase):

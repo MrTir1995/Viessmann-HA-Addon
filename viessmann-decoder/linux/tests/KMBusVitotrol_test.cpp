@@ -584,18 +584,19 @@ void parserNoiseCrcAndTimeouts() {
     stream.feed(bad); stream.feed(frame(0x31, {0xF8})); device.loop();
     CHECK(stream.output == reply(0xB1, {0xF8,0x11}));
     CHECK(device.getCrcErrorCount() == 1);
-    stream.output.clear();
-    stream.feed({0x11,0,0,0xFF,1,1}); // Impossible ping length; slide immediately.
-    stream.feed(frame(0x31, {0xF9})); device.loop();
-    CHECK(stream.output == reply(0xB1, {0xF9,0x38}));
-    stream.output.clear();
-    stream.feed({0x11,0,0xB3,255,1,1,255}); // Impossible count-prefixed length.
-    stream.feed(frame(0x31, {0xF8})); device.loop();
-    CHECK(stream.output == reply(0xB1, {0xF8,0x11}));
-    stream.output.clear();
-    stream.feed({0x11,0,0xBF,38,1,1,0x20}); // Room datasets cannot be this long.
-    stream.feed(frame(0x31, {0xF9})); device.loop();
-    CHECK(stream.output == reply(0xB1, {0xF9,0x38}));
+    const Bytes ambiguousPrefixes[] = {
+        {0x11,0,0,0xFF,1,1},
+        {0x11,0,0xB3,255,1,1,255},
+        {0x11,0,0xBF,38,1,1,0x20},
+    };
+    for (const Bytes& prefix : ambiguousPrefixes) {
+        stream.output.clear();
+        stream.feed(prefix); stream.feed(frame(0x31, {0xF8})); device.loop();
+        CHECK(stream.output.empty());
+        clockMillis += 500; device.loop();
+        CHECK(stream.output.empty());
+        CHECK(exchange(device, stream, 0x31, {0xF8}) == reply(0xB1, {0xF8,0x11}));
+    }
     stream.output.clear();
     stream.feed({0x11,0,0xBF,38,1,1,0x10}); device.loop();
     CHECK(stream.output.empty());
@@ -697,6 +698,31 @@ void corruptOuterFrameCannotFabricateBusGrant() {
     CHECK(device.getPendingCommandCount() == 0);
 }
 
+void malformedValidCrcPayloadCannotFabricateBusGrant() {
+    FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
+    const Bytes ping = frame(0);
+    Bytes badRoom = {0x20}; badRoom.insert(badRoom.end(), ping.begin(), ping.end());
+    Bytes badCount = {2}; badCount.insert(badCount.end(), ping.begin(), ping.end());
+    Bytes badWrapper = {0x34,0xA8,0xA8,uint8_t(0xFE ^ 0xAA)};
+    badWrapper.insert(badWrapper.end(), ping.begin(), ping.end());
+    const Bytes invalid[] = {
+        frame(0xBF, badRoom), frame(0xB3, badCount), frame(0, ping),
+        frame(0x31, ping), frame(0xBF, badWrapper),
+    };
+    for (const Bytes& outer : invalid) {
+        stream.feed(Bytes(outer.begin(), outer.end() - 2)); device.loop();
+        CHECK(stream.output.empty() && stream.writeCalls == 0);
+        CHECK(device.getPendingCommandCount() == 1 && !device.isOnline());
+        stream.feed(Bytes(outer.end() - 2, outer.end())); device.loop();
+        CHECK(stream.output.empty() && stream.writeCalls == 0);
+        CHECK(device.getPendingCommandCount() == 1 && !device.isOnline());
+    }
+    CHECK(device.getMalformedFrameCount() == 5);
+    CHECK(device.getCrcErrorCount() == 0);
+    CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x20, {200,0,0})));
+    CHECK(device.getPendingCommandCount() == 0 && device.isOnline());
+}
+
 void schedulingAndOnlineWraparound() {
     FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
     device.loop();
@@ -774,6 +800,7 @@ int main() {
         {"embedded frame protection", parserDoesNotProcessEmbeddedValidFrame},
         {"unrelated frames and echoes own payload", unrelatedFramesAndEchoesOwnTheirPayload},
         {"corrupt outer cannot fabricate grant", corruptOuterFrameCannotFabricateBusGrant},
+        {"malformed CRC-valid payload owns frame", malformedValidCrcPayloadCannotFabricateBusGrant},
         {"scheduling and online wraparound", schedulingAndOnlineWraparound},
         {"temperature boundaries and slot three", boundaryTemperaturesAndSlotThree},
     };

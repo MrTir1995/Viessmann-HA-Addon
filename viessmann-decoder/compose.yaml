@@ -1,0 +1,21 @@
+services:
+  viessmann-decoder:
+    build:
+      context: .
+      args:
+        BUILD_FROM: alpine:3.19
+    image: viessmann-decoder:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8099:8099"
+    devices:
+      - "${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
+    environment:
+      SERIAL_PORT: /dev/ttyUSB0
+      BAUD_RATE: "${BAUD_RATE:-9600}"
+      PROTOCOL: "${PROTOCOL:-vbus}"
+      SERIAL_CONFIG: "${SERIAL_CONFIG:-8N1}"
+      REMOTE_MODEL: "${REMOTE_MODEL:-vitotrol300}"
+      REMOTE_SLOT: "${REMOTE_SLOT:-1}"
+      INVERT_SERIAL: "${INVERT_SERIAL:-false}"

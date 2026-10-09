@@ -1,5 +1,5 @@
 #!/bin/bash
-# Viessmann Decoder Add-on Startup Script
+# Viessmann Decoder Add-on and standalone container startup script
 # Direct execution under tini (no s6-overlay, no bashio dependency)
 
 set -e
@@ -30,20 +30,45 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     USBIP_BUSID=$(jq -r '.usbip_busid // ""' "${CONFIG_FILE}")
     USBIP_PORT=$(jq -r '.usbip_port // 3240' "${CONFIG_FILE}")
 else
-    log_warning "Config file not found, using defaults"
-    SERIAL_PORT="/dev/ttyUSB0"
-    BAUD_RATE="9600"
-    PROTOCOL="vbus"
-    SERIAL_CONFIG="8N1"
-    REMOTE_MODEL="vitotrol300"
-    REMOTE_SLOT="1"
-    INVERT_SERIAL="false"
-    LOG_LEVEL="info"
+    log_info "No options.json found, using standalone environment configuration"
+    SERIAL_PORT="${SERIAL_PORT:-/dev/ttyUSB0}"
+    BAUD_RATE="${BAUD_RATE:-9600}"
+    PROTOCOL="${PROTOCOL:-vbus}"
+    SERIAL_CONFIG="${SERIAL_CONFIG:-8N1}"
+    REMOTE_MODEL="${REMOTE_MODEL:-vitotrol300}"
+    REMOTE_SLOT="${REMOTE_SLOT:-1}"
+    INVERT_SERIAL="${INVERT_SERIAL:-false}"
+    LOG_LEVEL="${LOG_LEVEL:-info}"
     USBIP_ENABLE="false"
     USBIP_HOST=""
     USBIP_BUSID=""
     USBIP_PORT="3240"
 fi
+
+case "${PROTOCOL}" in
+    vbus|kw|p300|km|km_remote) ;;
+    *) log_error "Invalid PROTOCOL: ${PROTOCOL}"; exit 1 ;;
+esac
+case "${BAUD_RATE}" in
+    1200|2400|4800|9600|19200|38400|115200) ;;
+    *) log_error "Invalid BAUD_RATE: ${BAUD_RATE}"; exit 1 ;;
+esac
+case "${SERIAL_CONFIG}" in
+    8N1|8E1|8E2) ;;
+    *) log_error "Invalid SERIAL_CONFIG: ${SERIAL_CONFIG}"; exit 1 ;;
+esac
+case "${REMOTE_MODEL}" in
+    vitotrol200|vitotrol300) ;;
+    *) log_error "Invalid REMOTE_MODEL: ${REMOTE_MODEL}"; exit 1 ;;
+esac
+case "${REMOTE_SLOT}" in
+    1|2|3) ;;
+    *) log_error "Invalid REMOTE_SLOT: ${REMOTE_SLOT}"; exit 1 ;;
+esac
+case "${INVERT_SERIAL}" in
+    true|false) ;;
+    *) log_error "Invalid INVERT_SERIAL: ${INVERT_SERIAL}"; exit 1 ;;
+esac
 
 log_info "Configuration:"
 log_info "  Serial Port: ${SERIAL_PORT}"

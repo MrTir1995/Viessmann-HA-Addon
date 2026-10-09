@@ -2,6 +2,48 @@
 
 This guide shows how to integrate the Viessmann Decoder addon with Home Assistant to create sensors, automations, and dashboards.
 
+## Custom Integration (empfohlen)
+
+Die Integration funktioniert mit Home Assistant Container, Core und OS, sowohl
+mit dem Standalone-Decoder als auch mit dem bestehenden Add-on. Sie liest die
+JSON-API `/data`; MQTT und Supervisor sind nicht erforderlich.
+
+1. Den kompletten Ordner `custom_components/viessmann_decoder` aus diesem
+   Verzeichnis in das Home-Assistant-Konfigurationsverzeichnis kopieren:
+   `<HA-config>/custom_components/viessmann_decoder/manifest.json` muss danach
+   vorhanden sein. Bei Home Assistant Container ist dies im Container
+   `/config/custom_components/viessmann_decoder`.
+2. Home Assistant neu starten.
+3. Unter **Einstellungen → Geräte & Dienste → Integration hinzufügen**
+   **Viessmann Decoder** auswählen.
+4. Die Basis-URL des Decoders eingeben, z. B. `http://192.168.1.50:8099`.
+   Keine `/data`-Endung verwenden. Bei HTTPS muss das Zertifikat gültig sein.
+5. Nach erfolgreicher Prüfung werden ein Decoder-Gerät sowie Sensoren und
+   Binärsensoren angelegt. Ein erreichbarer Decoder ohne Busdaten kann bereits
+   eingerichtet werden; Messwert-Entitäten erscheinen automatisch, sobald
+   entsprechende Daten empfangen werden.
+
+`localhost` bezeichnet aus Home Assistant Container dessen eigenen Container,
+nicht den Decoder! Bei getrennten Hosts die LAN-Adresse des Decoder-Hosts
+verwenden und dessen Firewall für den Home-Assistant-Host auf Port 8099 öffnen.
+Im gemeinsamen Docker-Netzwerk ist alternativ der Dienstname erreichbar:
+`http://viessmann-decoder:8099`. Der Adapter wird nur an den Decoder durchgereicht,
+nicht zusätzlich an Home Assistant. Das Add-on darf denselben Adapter nicht
+gleichzeitig verwenden.
+
+Bereitgestellt werden Temperaturen in °C, Pumpenwerte in %, Relaiszustände,
+API-/Busstatus und im `km_remote`-Modus die gelieferten Vitotrol-Werte.
+Kanalnamen sind generisch nummeriert, da die API keine anlagenspezifischen
+Sensorbezeichnungen liefert; die Namen können in Home Assistant angepasst werden.
+Die Integration fragt regelmäßig gemeinsam für alle Entitäten ab und stellt
+Messwerte bei fehlender Busbereitschaft bzw. API-Ausfall auf „nicht verfügbar“.
+Sie ist ausschließlich lesend; Vitotrol-Steuerung bleibt in der Weboberfläche.
+Durch Entfernen der Integration werden Abfragen beendet; der Decoder läuft weiter.
+
+Die folgenden REST-/Template-Beispiele sind eine manuelle Alternative. Nicht
+zusätzlich für dieselben Messwerte einrichten, wenn die Custom Integration bereits
+verwendet wird. Auch dort `localhost` durch die erreichbare Decoder-Adresse ersetzen.
+
 ## Table of Contents
 
 1. [REST Sensor Configuration](#rest-sensor-configuration)

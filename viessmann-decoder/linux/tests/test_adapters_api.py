@@ -178,6 +178,10 @@ class AdapterApiTests(unittest.TestCase):
                 with self.subTest(prefix=prefix, route=route):
                     self.assertEqual(self.request(prefix + route)[0], 200)
             self.assertIn(b"adapter", self.request(prefix + "/settings")[1])
+            devices_page = self.request(prefix + "/devices")[1]
+            self.assertIn(b'id="adapter-settings-add"', devices_page)
+            self.assertIn(b"id='themeToggle'", devices_page)
+            self.assertEqual(self.state(prefix + "/data")["participants"], [])
         for route in ["/data", "/api/remote", "/api/settings", "/settings", "/health", "/"]:
             self.assertEqual(self.request("/adapters/unknown" + route)[0], 404)
         self.assertEqual(self.request("/adapters/unknown/api/remote", {"room_temperature": 31})[0], 404)
@@ -330,10 +334,12 @@ class AdapterApiTests(unittest.TestCase):
             self.assertEqual(urljoin(original, location), original + "/")
         dashboard = self.request(base + "/")[1]
         for relative in [b"href='settings'", b"href='devices'", b"href='logs'", b"href='remote'",
-                         b"fetch('data')"]:
+                         b"fetch('data')", b"id='themeToggle'", b"id='busParticipants'",
+                         b"Add Serial Adapter"]:
             self.assertIn(relative, dashboard)
         for route in ["/settings", "/devices", "/logs", "/remote"]:
             page = self.request(base + route)[1]
+            self.assertIn(b"themeToggle", page)
             self.assertNotIn(b'window.location.href="/"', page)
             self.assertNotIn(b'window.location.href=\\"/\\"', page)
             self.assertNotIn(b"href='/'", page)

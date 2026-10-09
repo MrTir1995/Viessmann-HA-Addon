@@ -5,17 +5,18 @@ inline const char* adapterSettingsPanel() {
     return R"ADAPTER_PANEL(
 <section id="adapter-settings-panel" aria-labelledby="adapter-settings-heading">
   <style>
-    #adapter-settings-panel { margin: 24px 0; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+    #adapter-settings-panel { margin: 24px 0; padding: 20px; border: 1px solid var(--divider-color, #ccc); border-radius: 8px; background: var(--card-background, #fff); color: var(--primary-text, #212121); }
     #adapter-settings-panel .adapter-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     #adapter-settings-panel h2 { margin: 0; flex: 1; }
-    #adapter-settings-panel button { cursor: pointer; padding: 8px 14px; }
+    #adapter-settings-panel button { cursor: pointer; padding: 8px 14px; color: var(--primary-text, #212121); background: var(--card-background, #fff); border: 1px solid var(--divider-color, #ccc); border-radius: 4px; }
     #adapter-settings-panel button:disabled { cursor: wait; opacity: .6; }
-    #adapter-settings-panel .adapter-card { border: 1px solid #ccc; border-radius: 6px; padding: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+    #adapter-settings-panel .adapter-card { border: 1px solid var(--divider-color, #ccc); border-radius: 6px; padding: 12px; margin-top: 12px; overflow-wrap: anywhere; }
     #adapter-settings-panel .adapter-card h3 { margin: 0 0 8px; }
     #adapter-settings-panel .adapter-links { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
     #adapter-settings-panel .adapter-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
     #adapter-settings-panel label { display: block; margin: 8px 0 4px; }
-    #adapter-settings-panel input:not([type="checkbox"]), #adapter-settings-panel select { box-sizing: border-box; width: 100%; padding: 8px; }
+    #adapter-settings-panel input:not([type="checkbox"]), #adapter-settings-panel select { box-sizing: border-box; width: 100%; padding: 8px; color: var(--primary-text, #212121); background: var(--card-background, #fff); border: 1px solid var(--divider-color, #ccc); }
+    #adapter-settings-panel p { color: var(--secondary-text, #727272); }
     #adapter-settings-panel .adapter-actions { display: flex; gap: 12px; margin-top: 16px; }
     #adapter-settings-panel .adapter-notice { font-size: .95em; }
     #adapter-settings-panel [hidden] { display: none !important; }
@@ -98,7 +99,7 @@ inline const char* adapterSettingsPanel() {
     const protocol = get('protocol'), baud = get('baud'), config = get('config');
     // Keep the Supervisor ingress prefix on both root and adapter settings pages.
     const path = window.location.pathname;
-    const suffix = /\/(?:adapters\/[A-Za-z0-9_-]+\/)?settings\/?$/;
+    const suffix = /\/(?:adapters\/[A-Za-z0-9_-]+\/)?(?:settings|devices)\/?$/;
     const root = (path.replace(suffix, '') + '/').replace(/^\/+/, '/');
     const endpoint = root + 'api/adapters';
     const protocolNames = ['vbus', 'kw', 'p300', 'km', 'km_remote'];

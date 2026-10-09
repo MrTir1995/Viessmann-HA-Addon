@@ -23,6 +23,8 @@
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <cmath>
+#include "KMBusVitotrol.h"
 #include "LinuxSerial.h"
 #include "vbusdecoder.h"
 
@@ -31,6 +33,7 @@ constexpr useconds_t COMPATIBILITY_DELAY_US = 10000;
 constexpr int RECONNECT_INTERVAL_TICKS = 500; // 5 seconds with 10ms loop delay
 constexpr useconds_t LOOP_DELAY_US = 10000;
 constexpr int KMBUS_POLL_INTERVAL_TICKS = 300; // 3 seconds with 10ms loop delay for KM-Bus polling
+constexpr uint8_t PROTOCOL_KM_REMOTE = 4;
 
 // Configuration structure
 struct Config {
@@ -40,6 +43,8 @@ struct Config {
     bool invertSerial;     // Invert RX/TX signals for M-Bus adapters
     const char* serialPort;
     uint16_t webPort;
+    uint8_t remoteModelId;
+    uint8_t remoteSlot;
 };
 
 // Global variables
@@ -48,6 +53,7 @@ volatile bool serialConnected = false;
 volatile bool deviceCompatible = false;
 LinuxSerial vbusSerial;
 VBUSDecoder* vbus = nullptr;
+KMBusVitotrol* vitotrol = nullptr;
 Config config;
 pthread_mutex_t data_mutex = PTHREAD_MUTEX_INITIALIZER;
 std::string activeSerialPort;
@@ -65,8 +71,14 @@ const char* getProtocolName(uint8_t protocol) {
         case PROTOCOL_KW: return "KW-Bus (VS1)";
         case PROTOCOL_P300: return "P300 (VS2/Optolink)";
         case PROTOCOL_KM: return "KM-Bus";
+        case PROTOCOL_KM_REMOTE: return "KM-Bus Slave (Vitotrol)";
         default: return "Unknown";
     }
+}
+
+if (config.protocol == PROTOCOL_KM_REMOTE) {
+    config.baudRate = 1200;
+    config.serialConfig = SERIAL_8E1;
 }
 
 ProtocolType parseProtocol(const char* str) {
@@ -74,11 +86,13 @@ ProtocolType parseProtocol(const char* str) {
     if (strcasecmp(str, "kw") == 0) return PROTOCOL_KW;
     if (strcasecmp(str, "p300") == 0) return PROTOCOL_P300;
     if (strcasecmp(str, "km") == 0) return PROTOCOL_KM;
+    if (strcasecmp(str, "km_remote") == 0) return static_cast<ProtocolType>(PROTOCOL_KM_REMOTE);
     return PROTOCOL_VBUS;
 }
 
 uint8_t parseSerialConfig(const char* str) {
     if (strcasecmp(str, "8N1") == 0) return SERIAL_8N1;
+    if (strcasecmp(str, "8E1") == 0) return SERIAL_8E1;
     if (strcasecmp(str, "8E2") == 0) return SERIAL_8E2;
     return SERIAL_8N1;
 }
@@ -159,6 +173,26 @@ bool attemptConnection(const std::string& port) {
         delete oldDecoder;
     }
 
+    pthread_mutex_lock(&data_mutex);
+    KMBusVitotrol* oldVitotrol = vitotrol;
+    vitotrol = nullptr;
+    pthread_mutex_unlock(&data_mutex);
+    delete oldVitotrol;
+
+    if (config.protocol == PROTOCOL_KM_REMOTE) {
+        pthread_mutex_lock(&data_mutex);
+        delete vitotrol;
+        vitotrol = new KMBusVitotrol(&vbusSerial, config.remoteModelId, config.remoteSlot);
+        serialConnected = true;
+        deviceCompatible = true;
+        activeSerialPort = port;
+        pthread_mutex_unlock(&data_mutex);
+        printf("Connected to %s as Vitotrol %s, KM-Bus slot %u\n",
+               port.c_str(), config.remoteModelId == 0x38 ? "300" : "200",
+               config.remoteSlot);
+        return true;
+    }
+
     VBUSDecoder* decoder = new VBUSDecoder(&vbusSerial);
     decoder->begin((ProtocolType)config.protocol);
 
@@ -216,16 +250,40 @@ char* generateDataJSON() {
 
     JSON_APPEND("{");
     const char* status = "Disconnected";
-    if (serialConnected && deviceCompatible && decoder) {
+    if (config.protocol == PROTOCOL_KM_REMOTE) {
+        status = serialConnected ? "Vitotrol emulator active" : "Disconnected";
+    } else if (serialConnected && deviceCompatible && decoder) {
         status = decoder->getVbusStat() ? "OK" : "Error";
     }
 
     JSON_APPEND("\"serialConnected\":%s,", serialConnected ? "true" : "false");
     JSON_APPEND("\"compatible\":%s,", deviceCompatible ? "true" : "false");
     JSON_APPEND("\"serialPort\":\"%s\",", activeSerialPort.empty() ? "" : activeSerialPort.c_str());
-    JSON_APPEND("\"ready\":%s,", (decoder && serialConnected && deviceCompatible && decoder->isReady()) ? "true" : "false");
+    const bool dataReady = config.protocol == PROTOCOL_KM_REMOTE
+                               ? (serialConnected && vitotrol && vitotrol->isOnline())
+                               : (decoder && serialConnected && deviceCompatible && decoder->isReady());
+    JSON_APPEND("\"ready\":%s,", dataReady ? "true" : "false");
     JSON_APPEND("\"status\":\"%s\",", status);
     JSON_APPEND("\"protocol\":%d,", config.protocol);
+
+    if (config.protocol == PROTOCOL_KM_REMOTE) {
+        const bool connected = serialConnected && vitotrol;
+        JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[],");
+        JSON_APPEND("\"remote\":{\"model\":\"Vitotrol %s\",\"slot\":%u,"
+                    "\"online\":%s,\"room_temperature\":%.1f,"
+                    "\"desired_room_temperature\":%.1f,\"mode\":%u,"
+                    "\"last_master_dataset\":%u}",
+                    config.remoteModelId == 0x38 ? "300" : "200",
+                    config.remoteSlot,
+                    connected && vitotrol->isOnline() ? "true" : "false",
+                    connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
+                    connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
+                    connected ? vitotrol->getOperatingMode() : 0,
+                    connected ? vitotrol->getLastMasterDataset() : 0);
+        pthread_mutex_unlock(&data_mutex);
+        JSON_APPEND("}");
+        return json;
+    }
 
     if (!serialConnected || !decoder || !deviceCompatible) {
         JSON_APPEND("\"temperatures\":[],\"pumps\":[],\"relays\":[]");
@@ -274,6 +332,134 @@ char* generateDataJSON() {
     #undef JSON_APPEND
 
     return json;
+}
+
+struct RemotePostData {
+    std::string body;
+};
+
+int parseJsonNumber(const std::string& body, const char* key, float& value) {
+    const std::string field = std::string("\"") + key + "\"";
+    const size_t keyPosition = body.find(field);
+    if (keyPosition == std::string::npos) return 0;
+    const size_t colon = body.find(':', keyPosition + field.length());
+    if (colon == std::string::npos) return -1;
+
+    const char* start = body.c_str() + colon + 1;
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') ++start;
+    char* end = nullptr;
+    const float parsed = strtof(start, &end);
+    if (end == start || !isfinite(parsed)) return -1;
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') ++end;
+    if (*end != ',' && *end != '}') return -1;
+    value = parsed;
+    return 1;
+}
+
+int parseJsonString(const std::string& body, const char* key, std::string& value) {
+    const std::string field = std::string("\"") + key + "\"";
+    const size_t keyPosition = body.find(field);
+    if (keyPosition == std::string::npos) return 0;
+    const size_t colon = body.find(':', keyPosition + field.length());
+    if (colon == std::string::npos) return -1;
+    const size_t quote = body.find('"', colon + 1);
+    if (quote == std::string::npos) return -1;
+    const size_t endQuote = body.find('"', quote + 1);
+    if (endQuote == std::string::npos) return -1;
+    value = body.substr(quote + 1, endQuote - quote - 1);
+    return 1;
+}
+
+MHD_Result queueJson(MHD_Connection* connection, unsigned int status, const char* body) {
+    MHD_Response* response = MHD_create_response_from_buffer(
+        strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
+    if (!response) return MHD_NO;
+    MHD_add_response_header(response, "Content-Type", "application/json");
+    const MHD_Result result = MHD_queue_response(connection, status, response);
+    MHD_destroy_response(response);
+    return result;
+}
+
+MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
+                           size_t* uploadDataSize, const char* uploadData,
+                           void** connectionContext) {
+    if (strcmp(method, "GET") == 0) {
+        char json[512];
+        pthread_mutex_lock(&data_mutex);
+        const bool connected = serialConnected && vitotrol;
+        snprintf(json, sizeof(json),
+                 "{\"model\":\"Vitotrol %s\",\"slot\":%u,\"online\":%s,"
+                 "\"room_temperature\":%.1f,\"desired_room_temperature\":%.1f,"
+                 "\"mode\":%u,\"last_master_dataset\":%u}",
+                 config.remoteModelId == 0x38 ? "300" : "200",
+                 config.remoteSlot,
+                 connected && vitotrol->isOnline() ? "true" : "false",
+                 connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
+                 connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
+                 connected ? vitotrol->getOperatingMode() : 0,
+                 connected ? vitotrol->getLastMasterDataset() : 0);
+        pthread_mutex_unlock(&data_mutex);
+        return queueJson(connection, MHD_HTTP_OK, json);
+    }
+
+    if (strcmp(method, "POST") != 0) {
+        return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
+                         "{\"error\":\"Use GET or POST\"}");
+    }
+
+    RemotePostData* request = static_cast<RemotePostData*>(*connectionContext);
+    if (!request) {
+        request = new RemotePostData();
+        *connectionContext = request;
+        return MHD_YES;
+    }
+    if (*uploadDataSize > 0) {
+        if (request->body.size() + *uploadDataSize > 1024) {
+            delete request;
+            *connectionContext = nullptr;
+            *uploadDataSize = 0;
+            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                             "{\"error\":\"Request body too large\"}");
+        }
+        request->body.append(uploadData, *uploadDataSize);
+        *uploadDataSize = 0;
+        return MHD_YES;
+    }
+
+    float currentTemperature = 0;
+    float desiredTemperature = 0;
+    std::string mode;
+    const int currentField = parseJsonNumber(request->body, "room_temperature", currentTemperature);
+    const int desiredField = parseJsonNumber(request->body, "desired_room_temperature", desiredTemperature);
+    const int modeField = parseJsonString(request->body, "mode", mode);
+    const bool valid =
+        currentField >= 0 && desiredField >= 0 && modeField >= 0 &&
+        (currentField || desiredField || modeField) &&
+        (!currentField || (currentTemperature >= -20.0f && currentTemperature <= 50.0f)) &&
+        (!desiredField || (desiredTemperature >= 5.0f && desiredTemperature <= 35.0f));
+
+    bool applied = false;
+    if (valid) {
+        pthread_mutex_lock(&data_mutex);
+        if (serialConnected && vitotrol) {
+            applied = (!currentField || vitotrol->setCurrentRoomTemperature(currentTemperature)) &&
+                      (!desiredField || vitotrol->setDesiredRoomTemperature(desiredTemperature)) &&
+                      (!modeField || vitotrol->setOperatingMode(mode.c_str()));
+        }
+        pthread_mutex_unlock(&data_mutex);
+    }
+
+    delete request;
+    *connectionContext = nullptr;
+    if (!valid) {
+        return queueJson(connection, MHD_HTTP_BAD_REQUEST,
+                         "{\"error\":\"Invalid values or unsupported mode\"}");
+    }
+    if (!applied) {
+        return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
+                         "{\"error\":\"Remote is disconnected or its command queue is full\"}");
+    }
+    return queueJson(connection, MHD_HTTP_OK, "{\"status\":\"queued\"}");
 }
 
 // Generate HTML pages
@@ -345,14 +531,14 @@ const char* getDashboardHTML() {
     "if(d.serialConnected===false){"
     "statusDot.className='status-indicator error';"
     "statusText.textContent='Serial port not connected';"
-    "const protocols=['VBUS','KW-Bus','P300','KM-Bus'];"
+    "const protocols=['VBUS','KW-Bus','P300','KM-Bus','KM-Bus Slave'];"
     "protocolText.textContent=protocols[d.protocol]||'Unknown';"
     "container.innerHTML='<div class=\"empty-state\"><div class=\"empty-state-icon\">🔌</div><div style=\"font-size:18px;margin-bottom:8px;\">Serial port not connected</div><div style=\"color:var(--secondary-text);\">Please connect your Viessmann device and check the serial port configuration.</div></div>';"
     "return;"
     "}"
     "statusDot.className='status-indicator '+(d.status==='OK'?'ok':'error');"
     "statusText.textContent=d.status;"
-    "const protocols=['VBUS','KW-Bus','P300','KM-Bus'];"
+    "const protocols=['VBUS','KW-Bus','P300','KM-Bus','KM-Bus Slave'];"
     "protocolText.textContent=protocols[d.protocol]||'Unknown';"
     "if(!d.ready||(!d.temperatures.length&&!d.pumps.length&&!d.relays.length)){"
     "container.innerHTML='<div class=\"empty-state\"><div class=\"empty-state-icon\">⏳</div><div>Waiting for data...</div></div>';"
@@ -445,6 +631,17 @@ const char* getStatusHTML() {
     static thread_local char html[16384]; // Thread-local buffer for thread-safe access
 
     pthread_mutex_lock(&data_mutex);
+    if (config.protocol == PROTOCOL_KM_REMOTE && vitotrol) {
+        snprintf(html, sizeof(html),
+                 "<!doctype html><html><body><h1>Vitotrol Slave</h1>"
+                 "<p>Model: Vitotrol %s; slot %u; bus %s.</p>"
+                 "<p><a href='remote'>Open remote controls</a></p></body></html>",
+                 config.remoteModelId == 0x38 ? "300" : "200",
+                 config.remoteSlot,
+                 vitotrol->isOnline() ? "online" : "waiting for KM1");
+        pthread_mutex_unlock(&data_mutex);
+        return html;
+    }
     // Check if vbus is valid
     if (!vbus) {
         snprintf(html, sizeof(html),
@@ -517,7 +714,8 @@ const char* getStatusHTML() {
     "</div></body></html>",
     getProtocolName(config.protocol),
     config.baudRate,
-    config.serialConfig == SERIAL_8N1 ? "8N1" : "8E2",
+    config.serialConfig == SERIAL_8N1 ? "8N1" :
+    config.serialConfig == SERIAL_8E1 ? "8E1" : "8E2",
     config.serialPort,
     config.webPort,
     vbus->getVbusStat() ? "OK" : "Error",
@@ -598,6 +796,7 @@ const char* getSettingsHTML() {
     "<div class='form-group'>"
     "<label class='form-label'>Baud Rate</label>"
     "<select class='form-select'>"
+    "<option value='1200'%s>1200</option>"
     "<option value='2400'%s>2400</option>"
     "<option value='4800'%s>4800</option>"
     "<option value='9600'%s>9600</option>"
@@ -613,12 +812,14 @@ const char* getSettingsHTML() {
     "<option value='kw'%s>KW-Bus (VS1)</option>"
     "<option value='p300'%s>P300 (VS2/Optolink)</option>"
     "<option value='km'%s>KM-Bus</option>"
+    "<option value='km_remote'%s>KM-Bus Slave (Vitotrol emulation)</option>"
     "</select>"
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Serial Configuration</label>"
     "<select class='form-select'>"
     "<option value='8N1'%s>8N1</option>"
+    "<option value='8E1'%s>8E1</option>"
     "<option value='8E2'%s>8E2</option>"
     "</select>"
     "</div>"
@@ -631,6 +832,7 @@ const char* getSettingsHTML() {
     "</div>"
     "</body></html>",
     config.serialPort,
+    config.baudRate == 1200 ? " selected" : "",
     config.baudRate == 2400 ? " selected" : "",
     config.baudRate == 4800 ? " selected" : "",
     config.baudRate == 9600 ? " selected" : "",
@@ -641,7 +843,9 @@ const char* getSettingsHTML() {
     config.protocol == PROTOCOL_KW ? " selected" : "",
     config.protocol == PROTOCOL_P300 ? " selected" : "",
     config.protocol == PROTOCOL_KM ? " selected" : "",
+    config.protocol == PROTOCOL_KM_REMOTE ? " selected" : "",
     config.serialConfig == SERIAL_8N1 ? " selected" : "",
+    config.serialConfig == SERIAL_8E1 ? " selected" : "",
     config.serialConfig == SERIAL_8E2 ? " selected" : "");
 
     html[sizeof(html) - 1] = '\0';
@@ -788,6 +992,39 @@ static MHD_Result handle_request(void *cls,
     struct MHD_Response *response;
     MHD_Result ret;
 
+    if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/api/remote") == 0) {
+        return handleRemoteApi(connection, method, upload_data_size, upload_data, con_cls);
+    }
+    if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/remote") == 0) {
+        const char* html =
+            "<!doctype html><html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+            "<title>Vitotrol Remote</title><body><h1>Vitotrol Emulation</h1>"
+            "<p id='state'>Loading…</p><label>Room temperature °C "
+            "<input id='room' type='number' min='-20' max='50' step='0.1'></label>"
+            "<button onclick='send({room_temperature:+document.getElementById(\"room\").value})'>Set</button><br>"
+            "<label>Desired temperature °C <input id='desired' type='number' min='5' max='35' step='1'></label>"
+            "<button onclick='send({desired_room_temperature:+document.getElementById(\"desired\").value})'>Set</button><br>"
+            "<label>Mode <select id='mode'><option value='heat_water'>Heating + hot water</option>"
+            "<option value='water'>Hot water only</option><option value='off'>Off</option>"
+            "<option value='party_on'>Party on</option><option value='party_off'>Party off</option>"
+            "<option value='economy_on'>Economy on</option><option value='economy_off'>Economy off</option>"
+            "</select></label><button onclick='send({mode:document.getElementById(\"mode\").value})'>Apply</button>"
+            "<script>const stateEl=document.getElementById('state'),roomEl=document.getElementById('room'),"
+            "desiredEl=document.getElementById('desired'),modeEl=document.getElementById('mode');"
+            "async function refresh(){let d=await(await fetch('api/remote')).json();"
+            "stateEl.textContent=d.model+' / slot '+d.slot+' / '+(d.online?'Online':'Waiting for KM1');"
+            "roomEl.value=d.room_temperature;desiredEl.value=d.desired_room_temperature;}"
+            "async function send(v){let r=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},"
+            "body:JSON.stringify(v)});let d=await r.json();if(!r.ok)alert(d.error);refresh();}"
+            "refresh();setInterval(refresh,3000);</script></body></html>";
+        response = MHD_create_response_from_buffer(strlen(html), (void*)html, MHD_RESPMEM_PERSISTENT);
+        if (!response) return MHD_NO;
+        MHD_add_response_header(response, "Content-Type", "text/html; charset=utf-8");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
+
     // Handle routes
     if (strcmp(url, "/") == 0) {
         const char* html = getDashboardHTML();
@@ -866,9 +1103,11 @@ void printHelp(const char* progname) {
     printf("Viessmann Multi-Protocol Library - Web Server\n");
     printf("\nUsage: %s [options]\n", progname);
     printf("  -p <port>      Serial port (default: /dev/ttyUSB0)\n");
-    printf("  -b <baud>      Baud rate (default: 9600)\n");
-    printf("  -t <protocol>  Protocol type: vbus, kw, p300, km (default: vbus)\n");
-    printf("  -c <config>    Serial config: 8N1, 8E2 (default: 8N1)\n");
+    printf("  -b <baud>      Baud rate (KM-Bus remote mode uses fixed 1200)\n");
+    printf("  -t <protocol>  Protocol type: vbus, kw, p300, km, km_remote (default: vbus)\n");
+    printf("  -c <config>    Serial config: 8N1, 8E1, 8E2 (default: 8N1)\n");
+    printf("  -m <model>     Emulated remote: vitotrol200 or vitotrol300\n");
+    printf("  -s <slot>      KM-Bus heating circuit slot: 1, 2, or 3\n");
     printf("  -i <invert>    Invert serial signals: true, false (default: false)\n");
     printf("  -w <port>      Web server port (default: 8099)\n");
     printf("  -h             Show this help\n");
@@ -882,10 +1121,12 @@ int main(int argc, char* argv[]) {
     config.serialConfig = SERIAL_8N1;
     config.invertSerial = false;
     config.webPort = 8099;
+    config.remoteModelId = 0x38;
+    config.remoteSlot = 1;
 
     // Parse command line arguments
     int opt;
-    while ((opt = getopt(argc, argv, "p:b:t:c:i:w:h")) != -1) {
+    while ((opt = getopt(argc, argv, "p:b:t:c:i:m:s:w:h")) != -1) {
         switch (opt) {
             case 'p':
                 config.serialPort = optarg;
@@ -901,6 +1142,23 @@ int main(int argc, char* argv[]) {
                 break;
             case 'i':
                 config.invertSerial = (strcasecmp(optarg, "true") == 0 || strcmp(optarg, "1") == 0);
+                break;
+            case 'm':
+                if (strcasecmp(optarg, "vitotrol200") == 0 || strcmp(optarg, "200") == 0) {
+                    config.remoteModelId = 0x34;
+                } else if (strcasecmp(optarg, "vitotrol300") == 0 || strcmp(optarg, "300") == 0) {
+                    config.remoteModelId = 0x38;
+                } else {
+                    fprintf(stderr, "Invalid remote model: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 's':
+                config.remoteSlot = static_cast<uint8_t>(atoi(optarg));
+                if (config.remoteSlot < 1 || config.remoteSlot > 3) {
+                    fprintf(stderr, "Remote slot must be 1, 2, or 3\n");
+                    return 1;
+                }
                 break;
             case 'w':
                 config.webPort = atoi(optarg);
@@ -923,7 +1181,9 @@ int main(int argc, char* argv[]) {
     printf("Serial Port: %s\n", config.serialPort);
     printf("Baud Rate: %lu\n", config.baudRate);
     printf("Protocol: %s\n", getProtocolName(config.protocol));
-    printf("Serial Config: %s\n", config.serialConfig == SERIAL_8N1 ? "8N1" : "8E2");
+    printf("Serial Config: %s\n",
+           config.serialConfig == SERIAL_8N1 ? "8N1" :
+           config.serialConfig == SERIAL_8E1 ? "8E1" : "8E2");
     printf("Web Port: %d\n", config.webPort);
     printf("\n");
 
@@ -971,7 +1231,9 @@ int main(int argc, char* argv[]) {
 
         pthread_mutex_lock(&data_mutex);
         // Always call loop() if connected (KM-Bus needs it even when not compatible yet)
-        if (serialConnected && vbus) {
+        if (config.protocol == PROTOCOL_KM_REMOTE && serialConnected && vitotrol) {
+            vitotrol->loop();
+        } else if (serialConnected && vbus) {
             vbus->loop();
             
             // KM-Bus active polling: Request status data periodically
@@ -987,7 +1249,9 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        shouldReconnect = !serialConnected || !vbus || !deviceCompatible;
+        shouldReconnect = config.protocol == PROTOCOL_KM_REMOTE
+                              ? !serialConnected
+                              : (!serialConnected || !vbus || !deviceCompatible);
         pthread_mutex_unlock(&data_mutex);
 
         if (shouldReconnect) {
@@ -1014,6 +1278,7 @@ int main(int argc, char* argv[]) {
     printf("Stopping web server...\n");
     MHD_stop_daemon(daemon);
     if (vbus) delete vbus;
+    if (vitotrol) delete vitotrol;
 
     printf("Shutdown complete\n");
     return 0;

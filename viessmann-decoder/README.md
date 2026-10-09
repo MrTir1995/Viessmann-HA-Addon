@@ -86,6 +86,7 @@ The communication speed for your protocol.
 
 - `9600` - VBUS protocol (Vitosolic, DeltaSol)
 - `4800` - KW-Bus and P300 protocols (Vitotronic, Vitodens)
+- `1200` - KM-Bus Vitotrol slave emulation (selected automatically in that mode)
 
 ### protocol (required)
 
@@ -97,6 +98,7 @@ The protocol used by your heating system.
 - `kw` - KW-Bus (VS1) protocol (Vitotronic 100/200/300, older systems)
 - `p300` - P300/VS2 (Optolink) protocol (modern Vitodens boilers)
 - `km` - KM-Bus protocol (remote controls, expansion modules)
+- `km_remote` - Experimental KM-Bus slave that emulates a Vitotrol remote
 
 ### serial_config (required)
 
@@ -104,8 +106,15 @@ The serial port configuration.
 
 **Options:**
 
-- `8N1` - 8 data bits, no parity, 1 stop bit (for VBUS, KM-Bus)
+- `8N1` - 8 data bits, no parity, 1 stop bit (for VBUS)
+- `8E1` - 8 data bits, even parity, 1 stop bit (KM-Bus Vitotrol emulation)
 - `8E2` - 8 data bits, even parity, 2 stop bits (for KW-Bus, P300)
+
+### KM-Bus Vitotrol emulation (experimental)
+
+Select protocol `km_remote`, model `vitotrol300`, and the heating-circuit slot (usually 1). The add-on uses 1200 baud, 8E1, and an FC722-based M-Bus slave USB interface. The web interface exposes room-temperature input, desired room temperature, and basic operating-mode commands; read-only data is available at `/api/remote`.
+
+This is an experimental implementation based on OpenV KM-Bus observations and the public WiFiVitotrol project. Those protocol observations primarily target a Vitotronic 200 KW2, so compatibility with the Vitotronic 200 KM1 and all Vitotrol 300 functions is not guaranteed. The Linux add-on cannot guarantee the strict response timing a physical remote provides. Verify the adapter and operation on your exact controller, preferably with passive bus captures, before relying on control commands. KM-Bus wiring can damage the heating controller; use an isolated bus interface and consult a qualified installer.
 
 ## Configuration Examples
 

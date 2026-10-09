@@ -113,6 +113,7 @@ void LinuxSerial::flush() {
 
 speed_t LinuxSerial::getBaudRate(unsigned long baud) {
     switch(baud) {
+        case 1200: return B1200;
         case 4800: return B4800;
         case 9600: return B9600;
         case 19200: return B19200;

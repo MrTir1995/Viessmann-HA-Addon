@@ -43,6 +43,7 @@ COPY webserver /build/webserver/
 RUN test -f /build/library_src/vbusdecoder.cpp && \
     test -f /build/src/LinuxSerial.cpp && \
     test -f /build/src/Arduino.cpp && \
+    test -f /build/src/KMBusVitotrol.cpp && \
     test -f /build/webserver/main.cpp
 
 # Build components with error checking and optimization
@@ -58,7 +59,9 @@ RUN cd src && \
     g++ -c -fPIC -std=c++17 -O2 -Wall -Wextra \
     -I../include -I../library_src LinuxSerial.cpp -o LinuxSerial.o && \
     g++ -c -fPIC -std=c++17 -O2 -Wall -Wextra \
-    -I../include -I../library_src Arduino.cpp -o Arduino.o
+    -I../include -I../library_src Arduino.cpp -o Arduino.o && \
+    g++ -c -fPIC -std=c++17 -O2 -Wall -Wextra \
+    -I../include -I../library_src KMBusVitotrol.cpp -o KMBusVitotrol.o
 
 # Build the webserver application with full optimization
 RUN cd webserver && \
@@ -68,6 +71,7 @@ RUN cd webserver && \
     ../library_src/vbusdecoder.o \
     ../src/LinuxSerial.o \
     ../src/Arduino.o \
+    ../src/KMBusVitotrol.o \
     -I../include \
     -I../library_src \
     -lmicrohttpd \

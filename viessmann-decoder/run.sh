@@ -21,6 +21,8 @@ if [[ -f "${CONFIG_FILE}" ]]; then
     BAUD_RATE=$(jq -r '.baud_rate // 9600' "${CONFIG_FILE}")
     PROTOCOL=$(jq -r '.protocol // "vbus"' "${CONFIG_FILE}")
     SERIAL_CONFIG=$(jq -r '.serial_config // "8N1"' "${CONFIG_FILE}")
+    REMOTE_MODEL=$(jq -r '.remote_model // "vitotrol300"' "${CONFIG_FILE}")
+    REMOTE_SLOT=$(jq -r '.remote_slot // 1' "${CONFIG_FILE}")
     INVERT_SERIAL=$(jq -r '.invert_serial // false' "${CONFIG_FILE}")
     LOG_LEVEL=$(jq -r '.log_level // "info"' "${CONFIG_FILE}")
     USBIP_ENABLE=$(jq -r '.usbip_enable // false' "${CONFIG_FILE}")
@@ -33,6 +35,8 @@ else
     BAUD_RATE="9600"
     PROTOCOL="vbus"
     SERIAL_CONFIG="8N1"
+    REMOTE_MODEL="vitotrol300"
+    REMOTE_SLOT="1"
     INVERT_SERIAL="false"
     LOG_LEVEL="info"
     USBIP_ENABLE="false"
@@ -46,6 +50,7 @@ log_info "  Serial Port: ${SERIAL_PORT}"
 log_info "  Baud Rate: ${BAUD_RATE}"
 log_info "  Protocol: ${PROTOCOL}"
 log_info "  Serial Config: ${SERIAL_CONFIG}"
+log_info "  Remote Model: ${REMOTE_MODEL} (slot ${REMOTE_SLOT})"
 log_info "  Invert Serial: ${INVERT_SERIAL}"
 log_info "  Log Level: ${LOG_LEVEL}"
 log_info "  USB/IP Enabled: ${USBIP_ENABLE}"
@@ -104,5 +109,7 @@ exec /usr/local/bin/viessmann_webserver \
     -b "${BAUD_RATE}" \
     -t "${PROTOCOL}" \
     -c "${SERIAL_CONFIG}" \
+    -m "${REMOTE_MODEL}" \
+    -s "${REMOTE_SLOT}" \
     -i "${INVERT_SERIAL}" \
     -w 8099

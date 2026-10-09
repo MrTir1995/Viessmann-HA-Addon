@@ -111,12 +111,12 @@ bool KMBusVitotrol::setDesiredRoomTemperature(float temperature) {
     }
     _desiredRoomTemperature = temperature;
 
-    const uint8_t tenths = static_cast<uint8_t>(lroundf(temperature * 10.0f));
+    const uint8_t degrees = static_cast<uint8_t>(lroundf(temperature));
     const uint8_t data[5] = {
         0x0C,
         _slot,
         0xCD,
-        tenths,
+        degrees,
         0x00
     };
     return queueDataset(0x15, data, sizeof(data));
@@ -144,8 +144,8 @@ bool KMBusVitotrol::setOperatingMode(const char* mode) {
         return false;
     }
 
-    const uint8_t data[3] = {0x0C, _slot, command};
-    if (!queueDataset(0x15, data, sizeof(data))) return false;
+    const uint8_t data[8] = {0x00, _slot, command, 0, 0, 0, 0, 0};
+    if (!queueDataset(0x14, data, sizeof(data))) return false;
     _operatingMode = command;
     return true;
 }
@@ -219,8 +219,11 @@ void KMBusVitotrol::processFrame() {
             sendFrame(CMD_PONG, nullptr, 0);
             break;
         case CMD_WRITE_MANY:
-            for (uint8_t i = 0; i + 1 < dataLength; i += 2) {
-                _registers[data[i]] = data[i + 1];
+            if (dataLength > 0) {
+                const uint8_t count = data[0];
+                for (uint8_t i = 0; i < count && 1 + 2 * i + 1 < dataLength; ++i) {
+                    _registers[data[1 + 2 * i]] = data[2 + 2 * i];
+                }
             }
             sendFrame(CMD_PONG, nullptr, 0);
             break;

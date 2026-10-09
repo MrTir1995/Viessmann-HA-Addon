@@ -51,6 +51,14 @@ def extended_payload(profile="wifi"):
 
 
 class UrlTests(unittest.TestCase):
+    def test_adapter_base_paths_are_preserved_and_distinct(self):
+        primary = DATA.normalize_url("HTTP://DECODER:8099/adapters/primary/")
+        secondary = DATA.normalize_url("http://decoder:8099/adapters/adapter_1")
+        self.assertEqual(primary, "http://decoder:8099/adapters/primary")
+        self.assertEqual(secondary, "http://decoder:8099/adapters/adapter_1")
+        self.assertNotEqual(primary, secondary)
+        self.assertNotEqual(primary, DATA.normalize_url("http://decoder:8099"))
+
     def test_normalization_and_idempotence(self):
         cases = {
             " HTTP://DECODER.local.:80/ ": "http://decoder.local",
@@ -78,6 +86,16 @@ class UrlTests(unittest.TestCase):
 
 
 class DataTests(unittest.TestCase):
+    def test_offline_remote_zero_snapshot_does_not_fail_poll(self):
+        data = extended_payload()
+        data.update(serialConnected=False, compatible=False, ready=False)
+        data["remote"].update(
+            online=False, room_temperature=0, desired_room_temperature=0,
+            reduced_room_temperature=0, party_room_temperature=0, mode=0,
+            last_master_dataset=0,
+        )
+        self.assertEqual(DATA.validate_data(data), data)
+
     def test_unverified_candidates_are_not_measurements(self):
         source = extended_payload()
         expected = copy.deepcopy(source)

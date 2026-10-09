@@ -310,6 +310,147 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
                     await flow.async_step_user({"url": "http://DECODER/"})
             self.assertEqual(get_data.await_count, 1)
 
+    async def test_config_flow_distinct_adapter_paths_and_normalized_duplicates(self):
+        primary = "http://decoder:8099/adapters/primary"
+        secondary = "http://decoder:8099/adapters/adapter_1"
+        configured = set()
+        with patch.object(ConfigFlow, "configured", configured), patch.object(
+            self.api_module.DecoderApi, "async_get_data", AsyncMock(return_value=extended_payload())
+        ) as get_data:
+            for url, expected in (
+                ("HTTP://DECODER:8099/adapters/primary/", primary),
+                (secondary, secondary),
+            ):
+                flow = self.flow_module.DecoderConfigFlow()
+                flow.hass = self.hass
+                result = await flow.async_step_user({"url": url})
+                self.assertEqual(result["type"], "create_entry")
+                self.assertEqual(result["data"], {"url": expected})
+                self.assertEqual(flow.unique_id, expected)
+                configured.add(flow.unique_id)
+            self.assertEqual(configured, {primary, secondary})
+            duplicate = self.flow_module.DecoderConfigFlow()
+            duplicate.hass = self.hass
+            with self.assertRaises(DuplicateEntry):
+                await duplicate.async_step_user({"url": "HTTP://DECODER:8099/adapters/adapter_1/"})
+            self.assertEqual(get_data.await_count, 2)
+
+    async def test_two_adapter_get_post_identity_state_and_unload_isolation(self):
+        bases = (
+            "http://decoder:8099/adapters/primary",
+            "http://decoder:8099/adapters/adapter_1",
+        )
+        snapshots = {base: extended_payload() for base in bases}
+        snapshots[bases[0]]["remote"].update(room_temperature=20, pending_commands=1)
+        snapshots[bases[1]]["remote"].update(room_temperature=22, pending_commands=3)
+        calls = []
+
+        class Response:
+            status = 200
+
+            def __init__(self, payload):
+                self.body = json.dumps(payload).encode()
+                self.content = self
+
+            async def iter_chunked(self, size):
+                for index in range(0, len(self.body), size):
+                    yield self.body[index:index + size]
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class Session:
+            def get(self, url, **kwargs):
+                calls.append(("get", url, kwargs))
+                self.assert_endpoint(url, "/data")
+                return Response(snapshots[url.removesuffix("/data")])
+
+            def post(self, url, **kwargs):
+                calls.append(("post", url, kwargs))
+                self.assert_endpoint(url, "/api/remote")
+                return Response({"status": "queued"})
+
+            def assert_endpoint(self, url, suffix):
+                if url not in {base + suffix for base in bases}:
+                    raise AssertionError(f"Request escaped its adapter namespace: {url}")
+
+        self.hass.session = Session()
+        entries = []
+        coordinators = []
+        groups = []
+        for index, base in enumerate(bases):
+            entry = Entry(f"adapter_entry_{index}")
+            entry.data = {"url": base}
+            entries.append(entry)
+            self.assertTrue(await self.setup_module.async_setup_entry(self.hass, entry))
+            coordinator = self.hass.data["viessmann_decoder"][entry.entry_id]
+            coordinators.append(coordinator)
+            entities = []
+            for platform in (self.sensor, self.binary_sensor, self.number, self.select, self.switch):
+                await platform.async_setup_entry(self.hass, entry, entities.extend)
+            groups.append(entities)
+            self.assertIs(coordinator.api._session, self.hass.session)
+            self.assertEqual(coordinator.api.url, base)
+            self.assertTrue(all(e._attr_device_info["configuration_url"] == base for e in entities))
+        self.assertEqual([call[1] for call in calls], [base + "/data" for base in bases])
+        self.assertTrue(all(not call[2]["allow_redirects"] for call in calls))
+        self.assertTrue(
+            {e._attr_unique_id for e in groups[0]}.isdisjoint(
+                {e._attr_unique_id for e in groups[1]}
+            )
+        )
+        self.assertNotEqual(
+            groups[0][0]._attr_device_info["identifiers"],
+            groups[1][0]._attr_device_info["identifiers"],
+        )
+        rooms = [
+            next(e for e in group if isinstance(e, self.number.DecoderRemoteNumber)
+                 and e._field == "room_temperature")
+            for group in groups
+        ]
+        self.assertEqual([room.native_value for room in rooms], [20, 22])
+        original = [json.loads(json.dumps(c.data)) for c in coordinators]
+        with patch.object(coordinators[0], "async_request_refresh", AsyncMock()) as refresh0, patch.object(
+            coordinators[1], "async_request_refresh", AsyncMock()
+        ) as refresh1:
+            await rooms[0].async_set_native_value(21.5)
+            self.assertEqual(calls[-1][:2], ("post", bases[0] + "/api/remote"))
+            self.assertEqual(calls[-1][2]["json"], {"room_temperature": 21.5})
+            refresh0.assert_awaited_once()
+            refresh1.assert_not_awaited()
+            await rooms[1].async_set_native_value(23.5)
+            self.assertEqual(calls[-1][:2], ("post", bases[1] + "/api/remote"))
+            self.assertEqual(calls[-1][2]["json"], {"room_temperature": 23.5})
+            refresh0.assert_awaited_once()
+            refresh1.assert_awaited_once()
+        self.assertEqual([c.data for c in coordinators], original)
+        self.assertEqual([room.native_value for room in rooms], [20, 22])
+        self.assertEqual(
+            self.number.DecoderRemoteNumber(coordinators[0], "room_temperature")._attr_unique_id,
+            rooms[0]._attr_unique_id,
+        )
+        offline = json.loads(json.dumps(original[0]))
+        offline["remote"]["online"] = False
+        coordinators[0].publish(offline)
+        self.assertFalse(rooms[0].available)
+        self.assertTrue(rooms[1].available)
+        self.assertEqual(coordinators[1].data, original[1])
+        coordinators[0].last_update_success = False
+        self.assertTrue(all(not e.available for e in groups[0]))
+        self.assertTrue(rooms[1].available)
+        entries[0].unload()
+        self.assertEqual(coordinators[0].listeners, [])
+        self.assertEqual(len(coordinators[1].listeners), 5)
+        self.assertTrue(await self.setup_module.async_unload_entry(self.hass, entries[0]))
+        self.assertNotIn(entries[0].entry_id, self.hass.data["viessmann_decoder"])
+        self.assertIs(
+            self.hass.data["viessmann_decoder"][entries[1].entry_id], coordinators[1]
+        )
+        entries[1].unload()
+
     async def test_flow_validation_and_connection_errors(self):
         flow = self.flow_module.DecoderConfigFlow()
         flow.hass = self.hass
@@ -475,6 +616,23 @@ class ContractTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.data = extended_payload()
         self.coordinator.last_update_success = False
         self.assertTrue(all(not e.available for e in entities))
+
+    async def test_offline_zero_snapshot_polls_successfully_but_controls_unavailable(self):
+        data = extended_payload()
+        data.update(serialConnected=False, compatible=False, ready=False)
+        data["remote"].update(
+            online=False, room_temperature=0, desired_room_temperature=0,
+            reduced_room_temperature=0, party_room_temperature=0, mode=0,
+            last_master_dataset=0,
+        )
+        self.coordinator.data = await self.request(json.dumps(data).encode())
+        self.assertEqual(self.coordinator.data, data)
+        entities = await self.controls()
+        self.assertTrue(all(not e.available for e in entities))
+        with patch.object(self.api, "async_set_remote", AsyncMock()) as send:
+            with self.assertRaises(HomeAssistantError):
+                await entities[0].async_set_native_value(20)
+            send.assert_not_awaited()
 
     async def test_number_select_switch_commands_refresh_without_optimistic_mutation(self):
         self.coordinator.data = extended_payload()

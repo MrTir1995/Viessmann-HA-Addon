@@ -41,6 +41,7 @@ Für detaillierte Installationsanweisungen siehe [INSTALL.md](viessmann-decoder/
 - 🖥️ **Web-Interface**: Sauberes, responsives Dashboard zugänglich aus Home Assistant
 - 🔍 **Automatische Erkennung**: Erkennt automatisch Geräte auf dem Bus
 - ⚙️ **Einfache Konfiguration**: Intuitive Einrichtung über Home Assistant UI
+- 🔌 **Mehrere Adapter**: Unter `/settings` über **+** hinzufügen, unabhängig konfigurieren und gleichzeitig betreiben; je Adapter eine eigene API-Basis für Home Assistant
 - 🪶 **Leichtgewichtig**: Auf Alpine Linux basierend für minimalen Ressourcenverbrauch
 - 🏠 **Home Assistant Integration**: Ingress-Weboberfläche, REST-API und Custom Integration mit automatischen Sensoren
 - 🎛️ **Experimentelle Fernbedienung**: Raumtemperatur, Solltemperatur und grundlegende Betriebsarten im Modus `km_remote`

@@ -185,6 +185,21 @@ VIESSMANN_WEBSERVER=/tmp/viessmann_webserver \
 These tests validate implementation contracts; they do not prove electrical
 compatibility or response timing on a real controller.
 
+### Independent adapter APIs
+
+The settings page's adapter panel uses `GET /api/adapters` for discovery and
+`POST /api/adapters` to create an independently configured serial connection.
+Each returned `api_url` is a base path, not a data endpoint: append `/data` or
+`/api/remote` when polling or sending remote controls. The primary adapter remains
+available through the original root routes for backward compatibility.
+Home Assistant uses one config entry/coordinator per adapter base URL.
+
+Configuration, decoder state and bus logs must remain scoped to the selected
+adapter. A failed/disconnected adapter must not redirect traffic to another
+adapter's serial port. Configuration must reject duplicate device assignments;
+device access itself remains the responsibility of Docker/Supervisor.
+Pseudo-terminal regression tests verify parallel communication without a heater.
+
 The existing Docker restart tests require an already-built add-on image and
 a Docker daemon. They exercise actual container restart rather than a mocked
 process restart; without `VIESSMANN_RESTART_IMAGE` they are skipped:

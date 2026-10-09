@@ -29,6 +29,12 @@
 #include <deque>
 #include <mutex>
 #include <ctime>
+#include <memory>
+#include <thread>
+#include <atomic>
+#include <map>
+#include <limits.h>
+#include "adapter_settings.h"
 #include "KMBusVitotrol.h"
 #include "LinuxSerial.h"
 #include "vbusdecoder.h"
@@ -52,16 +58,8 @@ struct Config {
     uint8_t remoteSlot;
 };
 
-// Global variables
-volatile bool running = true;
-volatile bool serialConnected = false;
-volatile bool deviceCompatible = false;
-LinuxSerial vbusSerial;
-VBUSDecoder* vbus = nullptr;
-KMBusVitotrol* vitotrol = nullptr;
-Config config;
-pthread_mutex_t data_mutex = PTHREAD_MUTEX_INITIALIZER;
-std::string activeSerialPort;
+static_assert(std::atomic<bool>::is_always_lock_free, "Signal stop flag must be lock-free");
+std::atomic<bool> running{true};
 
 struct BusLogEntry {
     std::chrono::system_clock::time_point timestamp;
@@ -71,8 +69,77 @@ struct BusLogEntry {
 
 constexpr size_t MAX_BUS_LOG_ENTRIES = 500;
 constexpr size_t MAX_BUS_LOG_BYTES = 32;
-std::deque<BusLogEntry> busLogs;
-std::mutex busLogMutex;
+struct AdapterContext {
+    std::string id, name, port;
+    Config options{};
+    Config savedOptions{};
+    std::string savedPort;
+    bool connected = false;
+    bool compatible = false;
+    LinuxSerial serial;
+    VBUSDecoder* decoder = nullptr;
+    KMBusVitotrol* remote = nullptr;
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    std::string activePort;
+    std::string claimedPort;
+    dev_t claimedDevice = 0;
+    dev_t connectedDevice = 0;
+    ino_t connectedInode = 0;
+    std::deque<BusLogEntry> logs;
+    std::mutex logsMutex;
+    std::thread worker;
+    explicit AdapterContext(std::string identifier) : id(std::move(identifier)), name(id) {}
+    ~AdapterContext() {
+        delete decoder;
+        delete remote;
+        pthread_mutex_destroy(&mutex);
+    }
+};
+AdapterContext primaryAdapter("primary");
+thread_local AdapterContext* selectedAdapter = &primaryAdapter;
+AdapterContext& currentAdapter() { return *selectedAdapter; }
+struct AdapterSelection {
+    AdapterContext* previous;
+    explicit AdapterSelection(AdapterContext& adapter) : previous(selectedAdapter) {
+        selectedAdapter = &adapter;
+    }
+    ~AdapterSelection() { selectedAdapter = previous; }
+};
+constexpr size_t MAX_ADAPTERS = 8;
+std::vector<std::unique_ptr<AdapterContext>> extraAdapters;
+std::mutex adaptersMutex;
+void adapterWorker(AdapterContext* adapter);
+
+bool sameSerialPort(const std::string& left, const std::string& right) {
+    if (left.empty() || right.empty()) return false;
+    if (left == right) return true;
+    struct stat a{}, b{};
+    if (stat(left.c_str(), &a) == 0 && stat(right.c_str(), &b) == 0) {
+        if (S_ISCHR(a.st_mode) && S_ISCHR(b.st_mode)) return a.st_rdev == b.st_rdev;
+        if (a.st_dev == b.st_dev && a.st_ino == b.st_ino) return true;
+    }
+    char canonicalLeft[PATH_MAX], canonicalRight[PATH_MAX];
+    return realpath(left.c_str(), canonicalLeft) && realpath(right.c_str(), canonicalRight) &&
+           strcmp(canonicalLeft, canonicalRight) == 0;
+}
+
+// Caller holds adaptersMutex. Reserve configured and pending ports even while disconnected.
+bool portReserved(const std::string& port, const AdapterContext* except = nullptr) {
+    struct stat device{};
+    const bool characterDevice = stat(port.c_str(), &device) == 0 && S_ISCHR(device.st_mode);
+    auto reserved = [&](const AdapterContext& adapter) {
+        if (&adapter == except) return false;
+        if (sameSerialPort(port, adapter.claimedPort) ||
+            (characterDevice && adapter.claimedDevice && device.st_rdev == adapter.claimedDevice))
+            return true;
+        // Primary options win over conflicting persisted configs, never over open devices.
+        if (except == &primaryAdapter && sameSerialPort(port, primaryAdapter.port)) return false;
+        return sameSerialPort(port, adapter.port) || sameSerialPort(port, adapter.savedPort);
+    };
+    if (reserved(primaryAdapter)) return true;
+    for (const auto& adapter : extraAdapters) if (reserved(*adapter)) return true;
+    return false;
+}
 std::mutex restartMutex;
 bool restartPending = false;
 std::chrono::steady_clock::time_point restartDeadline;
@@ -88,6 +155,8 @@ bool containerRestartSupported() {
 }
 
 void recordBusTraffic(bool transmitted, const uint8_t* data, size_t size) {
+    auto& busLogs = currentAdapter().logs;
+    auto& busLogMutex = currentAdapter().logsMutex;
     const auto now = std::chrono::system_clock::now();
     std::lock_guard<std::mutex> lock(busLogMutex);
     for (size_t i = 0; i < size; ++i) {
@@ -103,6 +172,8 @@ void recordBusTraffic(bool transmitted, const uint8_t* data, size_t size) {
 }
 
 std::string generateBusLogs() {
+    auto& busLogs = currentAdapter().logs;
+    auto& busLogMutex = currentAdapter().logsMutex;
     std::lock_guard<std::mutex> lock(busLogMutex);
     std::string logs;
     for (const auto& entry : busLogs) {
@@ -128,9 +199,8 @@ std::string generateBusLogs() {
 }
 
 // Signal handler
-void signalHandler(int signum) {
-    printf("\nShutting down...\n");
-    running = false;
+void signalHandler(int) {
+    running.store(false, std::memory_order_relaxed);
 }
 
 // Helper functions
@@ -181,9 +251,14 @@ void addPortsFromGlob(const char* pattern, std::vector<std::string>& ports, std:
 }
 
 std::vector<std::string> discoverSerialPorts() {
+    const auto& config = currentAdapter().options;
     std::vector<std::string> ports;
     std::unordered_set<std::string> seen;
     const bool hasConfiguredPort = config.serialPort && strlen(config.serialPort) > 0;
+    if (currentAdapter().id != "primary") {
+        if (hasConfiguredPort) ports.push_back(config.serialPort);
+        return ports;
+    }
     if (hasConfiguredPort && portExists(config.serialPort) && seen.insert(config.serialPort).second) {
         ports.push_back(config.serialPort);
     }
@@ -197,6 +272,7 @@ std::vector<std::string> discoverSerialPorts() {
 }
 
 bool waitForCompatibility(VBUSDecoder* decoder) {
+    const auto& config = currentAdapter().options;
     if (!decoder) {
         return false;
     }
@@ -213,13 +289,45 @@ bool waitForCompatibility(VBUSDecoder* decoder) {
     return false;
 }
 
+void releaseAdapterClaim(AdapterContext& adapter) {
+    std::lock_guard<std::mutex> lock(adaptersMutex);
+    adapter.claimedPort.clear();
+    adapter.claimedDevice = 0;
+}
+
 bool attemptConnection(const std::string& port) {
+    auto& adapter = currentAdapter();
+    const auto& config = adapter.options;
+    auto& vbusSerial = adapter.serial;
+    auto& vbus = adapter.decoder;
+    auto& vitotrol = adapter.remote;
+    auto& serialConnected = adapter.connected;
+    auto& deviceCompatible = adapter.compatible;
+    auto& activeSerialPort = adapter.activePort;
+    auto& data_mutex = adapter.mutex;
+    {
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        if (portReserved(port, &adapter)) return false;
+        adapter.claimedPort = port;
+        struct stat device{};
+        adapter.claimedDevice = stat(port.c_str(), &device) == 0 && S_ISCHR(device.st_mode) ?
+                                device.st_rdev : 0;
+    }
+    auto releasePort = [&]() {
+        releaseAdapterClaim(adapter);
+    };
     if (vbusSerial.isOpen()) {
         vbusSerial.end();
     }
     if (!vbusSerial.begin(port.c_str(), config.baudRate, config.serialConfig)) {
         fprintf(stderr, "Failed to open serial port %s\n", port.c_str());
+        releasePort();
         return false;
+    }
+    struct stat device{};
+    if (stat(port.c_str(), &device) == 0) {
+        adapter.connectedDevice = device.st_rdev;
+        adapter.connectedInode = device.st_ino;
     }
     
     // Set signal inversion if configured (for M-Bus/KM-Bus adapters)
@@ -283,11 +391,15 @@ bool attemptConnection(const std::string& port) {
 
     fprintf(stderr, "No compatible frames detected on %s\n", port.c_str());
     vbusSerial.end();
+    releasePort();
     return false;
 }
 
 // Caller holds data_mutex; keep /data and /api/remote on the same contract.
 std::string generateRemoteJSON(bool includeDatasets) {
+    const auto& config = currentAdapter().options;
+    const auto serialConnected = currentAdapter().connected;
+    auto* vitotrol = currentAdapter().remote;
     const bool connected = serialConnected && vitotrol;
     char json[1024];
     snprintf(json, sizeof(json),
@@ -356,6 +468,14 @@ std::string generateRemoteJSON(bool includeDatasets) {
 
 // Generate JSON data response
 char* generateDataJSON() {
+    auto& adapter = currentAdapter();
+    const auto& config = adapter.options;
+    const auto& activeSerialPort = adapter.activePort;
+    auto& serialConnected = adapter.connected;
+    auto& deviceCompatible = adapter.compatible;
+    auto*& vbus = adapter.decoder;
+    auto*& vitotrol = adapter.remote;
+    auto& data_mutex = adapter.mutex;
     static char json[4096];
     int offset = 0;
     int remaining = sizeof(json) - 1; // Reserve space for null terminator
@@ -671,41 +791,420 @@ int parseJsonBool(const std::string& body, const char* key, bool& value) {
     return position == body.size() || body[position] == ',' || body[position] == '}' ? 1 : -1;
 }
 
+struct JsonField {
+    char type;
+    std::string value;
+};
+using JsonFields = std::map<std::string, JsonField>;
+
+bool validUtf8(const std::string& value) {
+    for (size_t i = 0; i < value.size();) {
+        const unsigned char first = value[i++];
+        if (first < 0x80) continue;
+        unsigned code;
+        size_t following;
+        unsigned minimum;
+        if (first >= 0xC2 && first <= 0xDF) {
+            code = first & 0x1F; following = 1; minimum = 0x80;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            code = first & 0x0F; following = 2; minimum = 0x800;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            code = first & 0x07; following = 3; minimum = 0x10000;
+        } else return false;
+        if (following > value.size() - i) return false;
+        while (following--) {
+            const unsigned char next = value[i++];
+            if ((next & 0xC0) != 0x80) return false;
+            code = (code << 6) | (next & 0x3F);
+        }
+        if (code < minimum || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF))
+            return false;
+    }
+    return true;
+}
+
+bool parseConfigObject(const std::string& body, JsonFields& fields) {
+    size_t position = 0;
+    auto whitespace = [&]() {
+        while (position < body.size() && body[position] &&
+               strchr(" \t\r\n", body[position])) ++position;
+    };
+    auto quoted = [&](std::string& value) {
+        if (position >= body.size() || body[position++] != '"') return false;
+        while (position < body.size()) {
+            unsigned char byte = body[position++];
+            if (byte == '"') return validUtf8(value);
+            if (byte < 32) return false;
+            if (byte == '\\') {
+                if (position >= body.size()) return false;
+                byte = body[position++];
+                if (byte == 'u') {
+                    auto hexCode = [&](unsigned& code) {
+                        code = 0;
+                        for (int i = 0; i < 4; ++i) {
+                            if (position >= body.size()) return false;
+                            const char digit = body[position++];
+                            unsigned nibble;
+                            if (digit >= '0' && digit <= '9') nibble = digit - '0';
+                            else if (digit >= 'a' && digit <= 'f') nibble = digit - 'a' + 10;
+                            else if (digit >= 'A' && digit <= 'F') nibble = digit - 'A' + 10;
+                            else return false;
+                            code = code * 16 + nibble;
+                        }
+                        return true;
+                    };
+                    unsigned code;
+                    if (!hexCode(code)) return false;
+                    if (code >= 0xD800 && code <= 0xDBFF) {
+                        if (body.compare(position, 2, "\\u") != 0) return false;
+                        position += 2;
+                        unsigned low;
+                        if (!hexCode(low) || low < 0xDC00 || low > 0xDFFF) return false;
+                        code = 0x10000 + ((code - 0xD800) << 10) + low - 0xDC00;
+                    } else if (code >= 0xDC00 && code <= 0xDFFF) return false;
+                    if (code < 0x80) value += static_cast<char>(code);
+                    else if (code < 0x800) {
+                        value += static_cast<char>(0xC0 | (code >> 6));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    } else if (code < 0x10000) {
+                        value += static_cast<char>(0xE0 | (code >> 12));
+                        value += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    } else {
+                        value += static_cast<char>(0xF0 | (code >> 18));
+                        value += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+                        value += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                        value += static_cast<char>(0x80 | (code & 0x3F));
+                    }
+                    continue;
+                }
+                if (byte == 'b') byte = '\b';
+                else if (byte == 'f') byte = '\f';
+                else if (byte == 'n') byte = '\n';
+                else if (byte == 'r') byte = '\r';
+                else if (byte == 't') byte = '\t';
+                else if (byte != '"' && byte != '\\' && byte != '/') return false;
+            }
+            value += static_cast<char>(byte);
+        }
+        return false;
+    };
+    whitespace();
+    if (position >= body.size() || body[position++] != '{') return false;
+    while (true) {
+        whitespace();
+        std::string key;
+        if (!quoted(key) || fields.count(key)) return false;
+        whitespace();
+        if (position >= body.size() || body[position++] != ':') return false;
+        whitespace();
+        if (position >= body.size()) return false;
+        JsonField field{};
+        if (body[position] == '"') {
+            field.type = 's';
+            if (!quoted(field.value)) return false;
+        } else {
+            size_t start = position;
+            while (position < body.size() && body[position] != ',' && body[position] != '}' &&
+                   !strchr(" \t\r\n", body[position])) ++position;
+            field.value = body.substr(start, position - start);
+            if (field.value == "true" || field.value == "false") field.type = 'b';
+            else {
+                field.type = 'n';
+                if (field.value.empty() || field.value.size() > 6 ||
+                    field.value.find_first_not_of("0123456789") != std::string::npos ||
+                    (field.value.size() > 1 && field.value[0] == '0')) return false;
+            }
+        }
+        fields.emplace(key, std::move(field));
+        whitespace();
+        if (position >= body.size()) return false;
+        const char separator = body[position++];
+        if (separator == '}') {
+            whitespace();
+            return position == body.size();
+        }
+        if (separator != ',') return false;
+    }
+}
+
+const char* protocolToken(uint8_t protocol) {
+    static const char* tokens[] = {"vbus", "kw", "p300", "km", "km_remote"};
+    return protocol < 5 ? tokens[protocol] : "vbus";
+}
+const char* serialToken(uint8_t serial) {
+    return serial == SERIAL_8E1 ? "8E1" : serial == SERIAL_8E2 ? "8E2" : "8N1";
+}
+std::string jsonQuote(const std::string& value) {
+    std::string result = "\"";
+    for (unsigned char byte : value) {
+        if (byte == '"' || byte == '\\') result += '\\';
+        if (byte < 32) {
+            char escaped[7];
+            snprintf(escaped, sizeof(escaped), "\\u%04x", byte);
+            result += escaped;
+        } else result += static_cast<char>(byte);
+    }
+    return result + '"';
+}
+
+bool validAdapterConfig(const JsonFields& fields, Config& options, std::string& port,
+                        std::string& name, bool requirePort, bool persisted = false) {
+    for (const auto& entry : fields) {
+        if (entry.first != "protocol" && entry.first != "baud_rate" &&
+            entry.first != "serial_config" && entry.first != "invert_serial" &&
+            entry.first != "remote_model" && entry.first != "remote_slot" &&
+            entry.first != "serial_port" && entry.first != "name" &&
+            !(persisted && entry.first == "id")) return false;
+    }
+    auto field = [&](const char* key, char type) {
+        auto item = fields.find(key);
+        return item != fields.end() && item->second.type == type;
+    };
+    if (!field("protocol", 's') || !field("baud_rate", 'n') ||
+        !field("serial_config", 's') || !field("invert_serial", 'b') ||
+        !field("remote_model", 's') || !field("remote_slot", 'n')) return false;
+    const auto& protocol = fields.at("protocol").value;
+    const auto& serial = fields.at("serial_config").value;
+    const auto& model = fields.at("remote_model").value;
+    const unsigned long baud = strtoul(fields.at("baud_rate").value.c_str(), nullptr, 10);
+    const unsigned long slot = strtoul(fields.at("remote_slot").value.c_str(), nullptr, 10);
+    if (protocol != "vbus" && protocol != "kw" && protocol != "p300" &&
+        protocol != "km" && protocol != "km_remote") return false;
+    // Match the baud rates actually supported by LinuxSerial.
+    if (baud != 1200 && baud != 4800 && baud != 9600 && baud != 19200 &&
+        baud != 38400 && baud != 57600 && baud != 115200) return false;
+    if (serial != "8N1" && serial != "8E1" && serial != "8E2") return false;
+    if ((model != "vitotrol200" && model != "vitotrol300") || slot < 1 || slot > 3)
+        return false;
+    if (requirePort && !field("serial_port", 's')) return false;
+    if (fields.count("serial_port")) {
+        if (!field("serial_port", 's')) return false;
+        port = fields.at("serial_port").value;
+    }
+    if (port.empty() || port.size() > 256 || port[0] != '/' ||
+        port.find_first_of("\r\n\t") != std::string::npos ||
+        port.find('\0') != std::string::npos ||
+        port.find_first_of("<>&'\"") != std::string::npos) return false;
+    for (unsigned char byte : port) if (byte < 32 || byte == 127) return false;
+    struct stat device{};
+    if (!persisted && stat(port.c_str(), &device) == 0 && !S_ISCHR(device.st_mode)) return false;
+    if (fields.count("name")) {
+        if (!field("name", 's')) return false;
+        name = fields.at("name").value;
+        if (name.empty() || name.size() > 80) return false;
+        for (unsigned char byte : name) if (byte < 32 || byte == 127) return false;
+    }
+    options.protocol = parseProtocol(protocol.c_str());
+    options.baudRate = options.protocol == PROTOCOL_KM_REMOTE ? 1200 : baud;
+    options.serialConfig = options.protocol == PROTOCOL_KM_REMOTE ? SERIAL_8E1 :
+                           parseSerialConfig(serial.c_str());
+    options.invertSerial = fields.at("invert_serial").value == "true";
+    options.remoteModelId = model == "vitotrol300" ? 0x38 : 0x34;
+    options.remoteSlot = slot;
+    return true;
+}
+
+std::string configJSON(const AdapterContext& adapter, bool saved) {
+    const auto& options = saved ? adapter.savedOptions : adapter.options;
+    const auto& port = saved ? adapter.savedPort : adapter.port;
+    return "{\"id\":" + jsonQuote(adapter.id) + ",\"name\":" + jsonQuote(adapter.name) +
+           ",\"serial_port\":" + jsonQuote(port) +
+           ",\"protocol\":" + jsonQuote(protocolToken(options.protocol)) +
+           ",\"baud_rate\":" + std::to_string(options.baudRate) +
+           ",\"serial_config\":" + jsonQuote(serialToken(options.serialConfig)) +
+           ",\"invert_serial\":" + (options.invertSerial ? "true" : "false") +
+           ",\"remote_model\":" + jsonQuote(options.remoteModelId == 0x38 ? "vitotrol300" : "vitotrol200") +
+           ",\"remote_slot\":" + std::to_string(options.remoteSlot) + "}";
+}
+
+std::string dataDirectory() {
+    const char* directory = getenv("VIESSMANN_DATA_DIR");
+    return directory && *directory ? directory : "/data";
+}
+
+bool atomicWrite(const std::string& filename, const std::string& body) {
+    const std::string target = dataDirectory() + "/" + filename;
+    std::string pattern = target + ".XXXXXX";
+    std::vector<char> temporary(pattern.begin(), pattern.end());
+    temporary.push_back('\0');
+    const int descriptor = mkstemp(temporary.data());
+    if (descriptor < 0) return false;
+    size_t offset = 0;
+    while (offset < body.size()) {
+        const ssize_t written = write(descriptor, body.data() + offset, body.size() - offset);
+        if (written <= 0) break;
+        offset += written;
+    }
+    bool success = offset == body.size() && fsync(descriptor) == 0;
+    if (close(descriptor) != 0) success = false;
+    if (success) success = rename(temporary.data(), target.c_str()) == 0;
+    if (!success) unlink(temporary.data());
+    else {
+        const int directory = open(dataDirectory().c_str(), O_RDONLY | O_DIRECTORY);
+        if (directory >= 0) { fsync(directory); close(directory); }
+    }
+    return success;
+}
+
+// adaptersMutex serializes updates, persistence, reservations and worker registration.
+bool saveAdapters() {
+    std::string body;
+    for (const auto& adapter : extraAdapters) body += configJSON(*adapter, true) + "\n";
+    return atomicWrite("adapters.jsonl", body);
+}
+
+void loadAdapters() {
+    const std::string path = dataDirectory() + "/adapters.jsonl";
+    FILE* file = fopen(path.c_str(), "r");
+    if (!file) return;
+    char body[16385];
+    const size_t length = fread(body, 1, sizeof(body), file);
+    const bool failed = ferror(file);
+    fclose(file);
+    if (failed || length > 16384) {
+        fprintf(stderr, "Ignoring oversized or unreadable adapter configuration\n");
+        return;
+    }
+    std::vector<std::unique_ptr<AdapterContext>> loaded;
+    const std::string content(body, length);
+    size_t position = 0;
+    size_t records = 0;
+    while (position < content.size()) {
+        const size_t end = content.find('\n', position);
+        const std::string line = content.substr(position, end - position);
+        position = end == std::string::npos ? content.size() : end + 1;
+        if (++records > MAX_ADAPTERS - 1 || line.size() > 2048) return;
+        JsonFields fields;
+        if (!parseConfigObject(line, fields) || !fields.count("id") ||
+            fields.at("id").type != 's') return;
+        const std::string id = fields.at("id").value;
+        bool safeId = false;
+        for (size_t i = 1; i < MAX_ADAPTERS; ++i)
+            if (id == "adapter_" + std::to_string(i)) safeId = true;
+        if (!safeId) return;
+        auto adapter = std::make_unique<AdapterContext>(id);
+        if (!validAdapterConfig(fields, adapter->options, adapter->port, adapter->name, true, true))
+            return;
+        for (const auto& other : loaded)
+            if (other->id == id || sameSerialPort(other->port, adapter->port)) return;
+        // Keep persisted adapters visible if new primary options reserve their port.
+        adapter->savedOptions = adapter->options;
+        adapter->savedPort = adapter->port;
+        adapter->options.serialPort = adapter->port.c_str();
+        adapter->savedOptions.serialPort = adapter->savedPort.c_str();
+        loaded.push_back(std::move(adapter));
+    }
+    extraAdapters = std::move(loaded);
+}
+
+MHD_Result handleAdaptersApi(MHD_Connection* connection, const char* method,
+                            size_t* uploadSize, const char* uploadData, void** context) {
+    if (strcmp(method, "GET") == 0) {
+        std::lock_guard<std::mutex> registryLock(adaptersMutex);
+        std::string body = "{\"adapters\":[";
+        auto append = [&](AdapterContext& adapter) {
+            pthread_mutex_lock(&adapter.mutex);
+            std::string entry = configJSON(adapter, false);
+            entry.pop_back();
+            const bool ready = adapter.connected &&
+                (adapter.remote ? adapter.remote->isOnline() :
+                 adapter.decoder && adapter.compatible && adapter.decoder->isReady());
+            entry += ",\"serialConnected\":" + std::string(adapter.connected ? "true" : "false") +
+                     ",\"ready\":" + (ready ? "true" : "false") +
+                     ",\"api_url\":" + jsonQuote("/adapters/" + adapter.id) + "}";
+            pthread_mutex_unlock(&adapter.mutex);
+            if (body.back() != '[') body += ',';
+            body += entry;
+        };
+        append(primaryAdapter);
+        for (const auto& adapter : extraAdapters) append(*adapter);
+        body += "]}";
+        return queueJson(connection, MHD_HTTP_OK, body.c_str());
+    }
+    if (strcmp(method, "POST") != 0)
+        return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"Use GET or POST\"}");
+    if (!restartOriginAllowed(connection))
+        return queueJson(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"Cross-origin request refused\"}");
+    auto* request = static_cast<RemotePostData*>(*context);
+    if (!request) { *context = new RemotePostData(); return MHD_YES; }
+    if (*uploadSize > 0) {
+        if (*uploadSize > 1024 - request->body.size()) request->tooLarge = true;
+        if (!request->tooLarge) request->body.append(uploadData, *uploadSize);
+        *uploadSize = 0;
+        return MHD_YES;
+    }
+    std::unique_ptr<RemotePostData> completed(request);
+    *context = nullptr;
+    if (request->tooLarge)
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE, "{\"error\":\"Request body too large\"}");
+    JsonFields fields;
+    auto adapter = std::make_unique<AdapterContext>("");
+    if (!parseConfigObject(request->body, fields) ||
+        !validAdapterConfig(fields, adapter->options, adapter->port, adapter->name, true))
+        return queueJson(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"Invalid adapter configuration\"}");
+    std::lock_guard<std::mutex> lock(adaptersMutex);
+    if (portReserved(adapter->port))
+        return queueJson(connection, MHD_HTTP_CONFLICT, "{\"error\":\"Serial port already reserved\"}");
+    if (extraAdapters.size() >= MAX_ADAPTERS - 1)
+        return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE, "{\"error\":\"Adapter capacity reached\"}");
+    for (size_t i = 1; i < MAX_ADAPTERS; ++i) {
+        const std::string id = "adapter_" + std::to_string(i);
+        bool used = false;
+        for (const auto& other : extraAdapters) if (other->id == id) used = true;
+        if (!used) { adapter->id = id; break; }
+    }
+    if (adapter->name.empty()) adapter->name = adapter->id;
+    adapter->savedOptions = adapter->options;
+    adapter->savedPort = adapter->port;
+    adapter->options.serialPort = adapter->port.c_str();
+    adapter->savedOptions.serialPort = adapter->savedPort.c_str();
+    extraAdapters.push_back(std::move(adapter));
+    if (!saveAdapters()) {
+        extraAdapters.pop_back();
+        return queueJson(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "{\"error\":\"Could not save adapter\"}");
+    }
+    auto& created = *extraAdapters.back();
+    try {
+        created.worker = std::thread(adapterWorker, &created);
+    } catch (...) {
+        extraAdapters.pop_back();
+        saveAdapters();
+        return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE, "{\"error\":\"Could not start adapter\"}");
+    }
+    const std::string body = "{\"id\":" + jsonQuote(created.id) +
+                             ",\"api_url\":" + jsonQuote("/adapters/" + created.id) + "}";
+    return queueJson(connection, MHD_HTTP_CREATED, body.c_str());
+}
+
 bool saveSettings(const std::string& protocol, unsigned long baudRate,
                   const std::string& serialConfig, const std::string& remoteModel,
                   unsigned int remoteSlot, bool invertSerial) {
-    char temporaryPath[] = "/data/ui_settings.json.XXXXXX";
-    const int descriptor = mkstemp(temporaryPath);
-    if (descriptor < 0) return false;
-
-    FILE* file = fdopen(descriptor, "w");
-    if (!file) {
-        close(descriptor);
-        unlink(temporaryPath);
-        return false;
-    }
-    const bool written =
-        fprintf(file,
-                "{\"baud_rate\":%lu,\"protocol\":\"%s\",\"serial_config\":\"%s\","
-                "\"remote_model\":\"%s\",\"remote_slot\":%u,\"invert_serial\":%s}\n",
-                baudRate, protocol.c_str(), serialConfig.c_str(), remoteModel.c_str(),
-                remoteSlot, invertSerial ? "true" : "false") >= 0;
-    const bool flushed = written && fflush(file) == 0 && fsync(fileno(file)) == 0;
-    const bool closed = fclose(file) == 0;
-    if (!flushed || !closed || rename(temporaryPath, "/data/ui_settings.json") != 0) {
-        unlink(temporaryPath);
-        return false;
-    }
-    return true;
+    char body[512];
+    snprintf(body, sizeof(body),
+             "{\"baud_rate\":%lu,\"protocol\":\"%s\",\"serial_config\":\"%s\","
+             "\"remote_model\":\"%s\",\"remote_slot\":%u,\"invert_serial\":%s}\n",
+             baudRate, protocol.c_str(), serialConfig.c_str(), remoteModel.c_str(),
+             remoteSlot, invertSerial ? "true" : "false");
+    return atomicWrite("ui_settings.json", body);
 }
 
 MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
                              size_t* uploadDataSize, const char* uploadData,
                              void** connectionContext) {
+    if (strcmp(method, "GET") == 0) {
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        const auto& adapter = currentAdapter();
+        const std::string body = configJSON(adapter, false);
+        return queueJson(connection, MHD_HTTP_OK, body.c_str());
+    }
     if (strcmp(method, "POST") != 0) {
         return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
                          "{\"error\":\"Use POST\"}");
     }
+    if (!restartOriginAllowed(connection))
+        return queueJson(connection, MHD_HTTP_FORBIDDEN,
+                         "{\"error\":\"Cross-origin request refused\"}");
 
     SettingsPostData* request = static_cast<SettingsPostData*>(*connectionContext);
     if (!request) {
@@ -729,6 +1228,35 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
         *connectionContext = nullptr;
         return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
                          "{\"error\":\"Request body too large\"}");
+    }
+
+    if (currentAdapter().id != "primary") {
+        std::unique_ptr<SettingsPostData> completed(request);
+        *connectionContext = nullptr;
+        JsonFields fields;
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        auto& adapter = currentAdapter();
+        Config options = adapter.savedOptions;
+        std::string port = adapter.savedPort, name = adapter.name;
+        if (!parseConfigObject(request->body, fields) ||
+            !validAdapterConfig(fields, options, port, name, false))
+            return queueJson(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"Invalid settings\"}");
+        if (portReserved(port, &adapter))
+            return queueJson(connection, MHD_HTTP_CONFLICT, "{\"error\":\"Serial port already reserved\"}");
+        const Config previous = adapter.savedOptions;
+        const std::string previousPort = adapter.savedPort, previousName = adapter.name;
+        adapter.savedOptions = options;
+        adapter.savedPort = port;
+        adapter.savedOptions.serialPort = adapter.savedPort.c_str();
+        adapter.name = name;
+        if (!saveAdapters()) {
+            adapter.savedOptions = previous;
+            adapter.savedPort = previousPort;
+            adapter.savedOptions.serialPort = adapter.savedPort.c_str();
+            adapter.name = previousName;
+            return queueJson(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "{\"error\":\"Could not save settings\"}");
+        }
+        return queueJson(connection, MHD_HTTP_OK, "{\"status\":\"saved\",\"restart_required\":true}");
     }
 
     std::string protocol;
@@ -894,6 +1422,9 @@ bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& up
 MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
                            size_t* uploadDataSize, const char* uploadData,
                            void** connectionContext) {
+    auto& data_mutex = currentAdapter().mutex;
+    auto& serialConnected = currentAdapter().connected;
+    auto*& vitotrol = currentAdapter().remote;
     if (strcmp(method, "GET") == 0) {
         pthread_mutex_lock(&data_mutex);
         const std::string body = generateRemoteJSON(true);
@@ -1130,6 +1661,10 @@ const char* getDashboardHTML() {
 }
 
 const char* getStatusHTML() {
+    const auto& config = currentAdapter().options;
+    auto*& vbus = currentAdapter().decoder;
+    auto*& vitotrol = currentAdapter().remote;
+    auto& data_mutex = currentAdapter().mutex;
     static thread_local char html[16384]; // Thread-local buffer for thread-safe access
 
     pthread_mutex_lock(&data_mutex);
@@ -1235,7 +1770,14 @@ const char* getStatusHTML() {
 }
 
 // Generate Settings Page HTML
-const char* getSettingsHTML() {
+std::string getSettingsHTML() {
+    const auto& config = currentAdapter().options;
+    const bool primary = currentAdapter().id == "primary";
+    const char* additionalBaudOption = primary ?
+        (config.baudRate == 2400 ? "<option value='2400' selected>2400</option>" :
+                                  "<option value='2400'>2400</option>") :
+        (config.baudRate == 57600 ? "<option value='57600' selected>57600</option>" :
+                                   "<option value='57600'>57600</option>");
     static thread_local char html[16384];
 
     int written = snprintf(html, sizeof(html) - 1,
@@ -1293,13 +1835,13 @@ const char* getSettingsHTML() {
     "<form id='settingsForm' onsubmit='saveSettings(event)'>"
     "<div class='form-group'>"
     "<label class='form-label'>Serial Port</label>"
-    "<input type='text' class='form-control' value='%s' readonly>"
+    "<input type='text' class='form-control' name='serial_port' value='%s'%s>"
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Baud Rate</label>"
     "<select class='form-select' name='baud_rate'>"
     "<option value='1200'%s>1200</option>"
-    "<option value='2400'%s>2400</option>"
+    "%s"
     "<option value='4800'%s>4800</option>"
     "<option value='9600'%s>9600</option>"
     "<option value='19200'%s>19200</option>"
@@ -1345,7 +1887,7 @@ const char* getSettingsHTML() {
     "</div>"
     "<div id='settingsMessage' class='form-group' role='status'>Changes require a container restart.</div>"
     "<div class='button-group'>"
-    "<button class='btn btn-secondary' onclick='window.location.href=\"/\"'>Cancel</button>"
+    "<button type='button' class='btn btn-secondary' onclick='window.location.href=\".\"'>Cancel</button>"
     "<button class='btn btn-primary' type='submit'>Save</button>"
     "</div>"
     "</form>"
@@ -1364,6 +1906,8 @@ const char* getSettingsHTML() {
     "remote_model:settingsForm.elements.remote_model.value,"
     "remote_slot:Number(settingsForm.elements.remote_slot.value),"
     "invert_serial:settingsForm.elements.invert_serial.checked};"
+    "if(!settingsForm.elements.serial_port.readOnly)"
+    "values.serial_port=settingsForm.elements.serial_port.value;"
     "try{const response=await fetch('api/settings',{method:'POST',"
     "headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});"
     "const result=await response.json();if(!response.ok)throw new Error(result.error);"
@@ -1372,8 +1916,9 @@ const char* getSettingsHTML() {
     "</script>"
     "</body></html>",
     config.serialPort,
+    primary ? " readonly" : "",
     config.baudRate == 1200 ? " selected" : "",
-    config.baudRate == 2400 ? " selected" : "",
+    additionalBaudOption,
     config.baudRate == 4800 ? " selected" : "",
     config.baudRate == 9600 ? " selected" : "",
     config.baudRate == 19200 ? " selected" : "",
@@ -1399,11 +1944,15 @@ const char* getSettingsHTML() {
         fprintf(stderr, "Warning: HTML buffer overflow detected\n");
     }
 
-    return html;
+    std::string result(html);
+    result.insert(result.find("<div class='card'>"), adapterSettingsPanel());
+    return result;
 }
 
 // Generate Device Configuration Page HTML
 const char* getDevicesHTML() {
+    auto*& vbus = currentAdapter().decoder;
+    auto& data_mutex = currentAdapter().mutex;
     static thread_local char html[16384];
 
     pthread_mutex_lock(&data_mutex);
@@ -1502,7 +2051,7 @@ const char* getDevicesHTML() {
     "</select>"
     "</div>"
     "<div class='button-group'>"
-    "<button class='btn btn-secondary' onclick='window.location.href=\"/\"'>Cancel</button>"
+    "<button type='button' class='btn btn-secondary' onclick='window.location.href=\".\"'>Cancel</button>"
     "<button class='btn btn-primary' onclick='alert(\"Device management is handled automatically. For manual configuration, devices can be added through the library API.\")'>Add Device</button>"
     "</div>"
     "</form>"
@@ -1707,7 +2256,34 @@ static MHD_Result handle_request(void *cls,
                                  const char *upload_data,
                                  size_t *upload_data_size,
                                  void **con_cls) {
-
+    if (strcmp(url, "/api/adapters") == 0)
+        return handleAdaptersApi(connection, method, upload_data_size, upload_data, con_cls);
+    AdapterContext* adapter = &primaryAdapter;
+    std::string scopedUrl;
+    if (strncmp(url, "/adapters/", 10) == 0) {
+        const std::string path(url);
+        const size_t slash = path.find('/', 10);
+        const std::string id = path.substr(10, slash == std::string::npos ?
+                                         std::string::npos : slash - 10);
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        adapter = id == "primary" ? &primaryAdapter : nullptr;
+        for (const auto& candidate : extraAdapters)
+            if (candidate->id == id) adapter = candidate.get();
+        if (!adapter)
+            return queueJson(connection, MHD_HTTP_NOT_FOUND, "{\"error\":\"Unknown adapter\"}");
+        if (slash == std::string::npos) {
+            MHD_Response* redirect = MHD_create_response_from_buffer(0, nullptr, MHD_RESPMEM_PERSISTENT);
+            if (!redirect) return MHD_NO;
+            MHD_add_response_header(redirect, "Location", (id + "/").c_str());
+            const MHD_Result result = MHD_queue_response(connection, MHD_HTTP_MOVED_PERMANENTLY, redirect);
+            MHD_destroy_response(redirect);
+            return result;
+        }
+        scopedUrl = path.substr(slash);
+        url = scopedUrl.c_str();
+    }
+    AdapterSelection selection(*adapter);
+    const auto& config = adapter->options;
     struct MHD_Response *response;
     MHD_Result ret;
 
@@ -1858,7 +2434,66 @@ static void requestCompleted(void*, MHD_Connection*, void** context,
     *context = nullptr;
 }
 
+void adapterWorker(AdapterContext* adapter) {
+    AdapterSelection selection(*adapter);
+    const auto& config = adapter->options;
+    adapter->serial.setTrafficCallback(recordBusTraffic);
+    int reconnectCounter = RECONNECT_INTERVAL_TICKS;
+    int pollCounter = 0;
+    while (running) {
+        bool reconnect;
+        bool disconnected = false;
+        pthread_mutex_lock(&adapter->mutex);
+        if (adapter->connected) {
+            struct stat device{};
+            if (stat(adapter->activePort.c_str(), &device) != 0 ||
+                device.st_rdev != adapter->connectedDevice ||
+                device.st_ino != adapter->connectedInode) {
+                adapter->connected = false;
+                adapter->compatible = false;
+                adapter->activePort.clear();
+                delete adapter->decoder;
+                adapter->decoder = nullptr;
+                delete adapter->remote;
+                adapter->remote = nullptr;
+                adapter->serial.end();
+                disconnected = true;
+            }
+        }
+        if (adapter->connected && adapter->remote) adapter->remote->loop();
+        else if (adapter->connected && adapter->decoder) {
+            adapter->decoder->loop();
+            if (config.protocol == PROTOCOL_KM && ++pollCounter >= KMBUS_POLL_INTERVAL_TICKS) {
+                pollCounter = 0;
+                adapter->decoder->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
+            }
+        }
+        reconnect = !adapter->connected;
+        pthread_mutex_unlock(&adapter->mutex);
+        if (disconnected) releaseAdapterClaim(*adapter);
+        if (reconnect && ++reconnectCounter >= RECONNECT_INTERVAL_TICKS) {
+            reconnectCounter = 0;
+            for (const auto& port : discoverSerialPorts())
+                if (running && attemptConnection(port)) break;
+        }
+        if (config.protocol == PROTOCOL_KM_REMOTE && adapter->connected)
+            adapter->serial.waitForData(10);
+        else usleep(LOOP_DELAY_US);
+    }
+    pthread_mutex_lock(&adapter->mutex);
+    adapter->connected = false;
+    adapter->compatible = false;
+    delete adapter->decoder;
+    adapter->decoder = nullptr;
+    delete adapter->remote;
+    adapter->remote = nullptr;
+    adapter->serial.end();
+    pthread_mutex_unlock(&adapter->mutex);
+    releaseAdapterClaim(*adapter);
+}
+
 int main(int argc, char* argv[]) {
+    auto& config = primaryAdapter.options;
     // Default configuration
     config.serialPort = "/dev/ttyUSB0";
     config.baudRate = 1200;
@@ -1937,20 +2572,11 @@ int main(int argc, char* argv[]) {
     printf("Web Port: %d\n", config.webPort);
     printf("\n");
 
-    // Try to initialize serial port (don't exit on failure)
-    vbusSerial.setTrafficCallback(recordBusTraffic);
-    bool connected = false;
-    for (const auto& port : discoverSerialPorts()) {
-        printf("Attempting to connect on %s...\n", port.c_str());
-        if (attemptConnection(port)) {
-            connected = true;
-            break;
-        }
-    }
-    if (!connected) {
-        fprintf(stderr, "Warning: No compatible serial device found - starting in disconnected mode\n");
-        fprintf(stderr, "The web interface will show 'Serial port not connected'\n");
-    }
+    primaryAdapter.port = config.serialPort;
+    config.serialPort = primaryAdapter.port.c_str();
+    primaryAdapter.savedPort = primaryAdapter.port;
+    primaryAdapter.savedOptions = config;
+    loadAdapters();
 
     // Start HTTP server (always start, even without serial connection)
     struct MHD_Daemon *daemon;
@@ -1963,20 +2589,29 @@ int main(int argc, char* argv[]) {
 
     if (daemon == NULL) {
         fprintf(stderr, "Error: Failed to start HTTP server on port %d\n", config.webPort);
-        if (vbus) delete vbus;
+        return 1;
+    }
+    try {
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        primaryAdapter.worker = std::thread(adapterWorker, &primaryAdapter);
+        for (auto& adapter : extraAdapters)
+            if (!adapter->worker.joinable())
+                adapter->worker = std::thread(adapterWorker, adapter.get());
+    } catch (...) {
+        running = false;
+        MHD_stop_daemon(daemon);
+        if (primaryAdapter.worker.joinable()) primaryAdapter.worker.join();
+        for (auto& adapter : extraAdapters)
+            if (adapter->worker.joinable()) adapter->worker.join();
+        fprintf(stderr, "Error: Could not start serial workers\n");
         return 1;
     }
 
     printf("Web server started on port %d\n", config.webPort);
     printf("Access the dashboard at: http://localhost:%d\n", config.webPort);
-    if (!serialConnected) {
-        printf("Note: Serial port not connected - will retry periodically\n");
-    }
     printf("\nPress Ctrl+C to stop\n\n");
 
     // Main loop with serial port reconnection logic
-    int reconnectCounter = 0;
-    int kmbusPollCounter = 0;  // Counter for KM-Bus polling
     bool intentionalRestart = false;
 
     while (running) {
@@ -1987,64 +2622,16 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
-        bool shouldReconnect;
-
-        pthread_mutex_lock(&data_mutex);
-        // Always call loop() if connected (KM-Bus needs it even when not compatible yet)
-        if (config.protocol == PROTOCOL_KM_REMOTE && serialConnected && vitotrol) {
-            vitotrol->loop();
-        } else if (serialConnected && vbus) {
-            vbus->loop();
-            
-            // KM-Bus active polling: Request status data periodically
-            // IMPORTANT: Must run even when deviceCompatible=false to receive first frames!
-            if (config.protocol == PROTOCOL_KM) {
-                kmbusPollCounter++;
-                if (kmbusPollCounter >= KMBUS_POLL_INTERVAL_TICKS) {
-                    kmbusPollCounter = 0;
-                    // Poll status record from master controller
-                    printf("[DEBUG] KM-Bus: Sending status request to address 0x%02X\n", KMBUS_ADDR_MASTER_STATUS);
-                    bool result = vbus->pollKMBusStatusRecord(KMBUS_ADDR_MASTER_STATUS);
-                    printf("[DEBUG] KM-Bus: Poll result: %s\n", result ? "SUCCESS" : "FAILED");
-                }
-            }
-        }
-        shouldReconnect = config.protocol == PROTOCOL_KM_REMOTE
-                              ? !serialConnected
-                              : (!serialConnected || !vbus || !deviceCompatible);
-        pthread_mutex_unlock(&data_mutex);
-
-        if (shouldReconnect) {
-            // Try to reconnect periodically
-            reconnectCounter++;
-            if (reconnectCounter >= RECONNECT_INTERVAL_TICKS) {
-                reconnectCounter = 0;
-                auto ports = discoverSerialPorts();
-                if (ports.empty() && config.serialPort && strlen(config.serialPort) > 0) {
-                    ports.push_back(config.serialPort);
-                }
-                for (const auto& port : ports) {
-                    printf("Attempting to connect on %s...\n", port.c_str());
-                    if (attemptConnection(port)) {
-                        break;
-                    }
-                }
-            }
-        }
-        if (config.protocol == PROTOCOL_KM_REMOTE && serialConnected) {
-            // Wake on RX instead of imposing a fixed delay on every slave response.
-            vbusSerial.waitForData(10);
-        } else {
-            usleep(LOOP_DELAY_US);
-        }
+        usleep(LOOP_DELAY_US);
     }
 
     // Cleanup
     printf("Stopping web server...\n");
+    running = false;
     MHD_stop_daemon(daemon);
-    if (vbus) delete vbus;
-    if (vitotrol) delete vitotrol;
-    vbusSerial.end();
+    primaryAdapter.worker.join();
+    for (auto& adapter : extraAdapters)
+        if (adapter->worker.joinable()) adapter->worker.join();
 
     printf("Shutdown complete\n");
     // Exit the entrypoint, not just re-exec the server: the runtime then runs

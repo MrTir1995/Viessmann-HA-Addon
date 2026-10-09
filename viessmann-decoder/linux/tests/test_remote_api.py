@@ -7,6 +7,7 @@ import pty
 import select
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -28,6 +29,8 @@ def telegram(command, data=b"", destination=0x11, slot=1):
 @unittest.skipUnless(os.environ.get("VIESSMANN_WEBSERVER"), "Set VIESSMANN_WEBSERVER")
 class RemoteApiTests(unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix=".remote-api-", dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
         self.master, self.slave = pty.openpty()
         os.set_blocking(self.master, False)
         with socket.socket() as reservation:
@@ -41,6 +44,7 @@ class RemoteApiTests(unittest.TestCase):
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env={**os.environ, "VIESSMANN_DATA_DIR": directory.name},
         )
         self.addCleanup(self.stop)
         deadline = time.monotonic() + 5

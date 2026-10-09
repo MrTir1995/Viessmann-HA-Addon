@@ -201,7 +201,8 @@ Select protocol `km_remote`, model `vitotrol300`, and the heating-circuit slot (
 
 Der Dashboard-Button **Vitotrol-Steuerung** öffnet `/remote`. Dort lassen sich
 Raum-Isttemperatur, normale und reduzierte Raum-Solltemperatur, Betriebsart,
-Party- und Sparbetrieb vorgeben. Steuerwerte sind lokale Vorgaben, keine
+Party- und Sparbetrieb vorgeben. Beim Einschalten des Partybetriebs ist auch
+dessen Solltemperatur wählbar. Steuerwerte sind lokale Vorgaben, keine
 Bestätigung durch die Regelung. Mehrere API-Vorgaben werden atomar übernommen;
 ungültige Werte oder eine volle Warteschlange führen zu keiner Teiländerung.
 

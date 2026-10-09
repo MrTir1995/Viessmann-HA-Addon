@@ -8,11 +8,13 @@ public:
         bool hasRoomTemperature = false;
         bool hasDesiredRoomTemperature = false;
         bool hasReducedRoomTemperature = false;
+        bool hasPartyRoomTemperature = false;
         bool hasMode = false;
         bool hasProfile = false;
         float roomTemperature = 0;
         float desiredRoomTemperature = 0;
         float reducedRoomTemperature = 0;
+        float partyRoomTemperature = 0;
         const char* mode = nullptr;
         const char* profile = nullptr;
     };
@@ -28,6 +30,7 @@ public:
     float getCurrentRoomTemperature() const;
     float getDesiredRoomTemperature() const;
     float getReducedRoomTemperature() const;
+    float getPartyRoomTemperature() const;
     const char* getProtocolProfile() const;
     uint8_t getPendingCommandCount() const;
     uint8_t getOperatingMode() const;
@@ -72,6 +75,7 @@ private:
     uint32_t _txStartedMillis;
     bool _txQueued;
     float _currentRoomTemperature, _desiredRoomTemperature, _reducedRoomTemperature;
+    float _partyRoomTemperature;
     uint8_t _operatingMode, _lastMasterDataset;
     uint32_t _lastMessageMillis, _lastRoomTemperatureSend;
     uint32_t _crcErrors, _malformedFrames, _unknownCommands;

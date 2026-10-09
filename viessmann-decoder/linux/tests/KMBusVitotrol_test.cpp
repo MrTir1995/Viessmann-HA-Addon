@@ -118,13 +118,29 @@ void registerCommandsAndVariants() {
     CHECK(exchange(device, stream, 0xB3, {2,0x70,0x88,0x71,0x99}) == reply(0x80));
     CHECK(exchange(device, stream, 0x33, {0x70,2}) ==
           reply(0xB3, {0x70,0x88,0x71,0x99}));
+    CHECK(exchange(device, stream, 0xB1, {0,0x42}) == reply(0x80));
+    CHECK(device.setCurrentRoomTemperature(21));
+    CHECK(exchange(device, stream, 0x31, {0}) == reply(0xB1, {0,0x42}));
+    profile(device, "wifi");
+    CHECK(exchange(device, stream, 0x31, {0}) == reply(0xB1, {0,0x42}));
     profile(device, "openv");
     CHECK(exchange(device, stream, 0x31, {0}) == reply(0xB1, {0,0}));
+    CHECK(exchange(device, stream, 0x33, {0xF8,4}) ==
+          reply(0xB3, {0xF8,0x11,0xF9,0x38,0xFA,0,0xFB,5}));
+    CHECK(exchange(device, stream, 0xB1, {0xFB,0x11}).empty());
+    CHECK(exchange(device, stream, 0x31, {0xFB}) == reply(0xB1, {0xFB,5}));
     CHECK(exchange(device, stream, 0xB1, {0x70,0x44}).empty());
     CHECK(exchange(device, stream, 0xB3, {1,0x71,0x33}).empty());
     CHECK(exchange(device, stream, 0x33, {0x70,2}) ==
           reply(0xB3, {0x70,0x44,0x71,0x33}));
+    profile(device, "wifi");
+    CHECK(exchange(device, stream, 0x33, {0xF8,4}) ==
+          reply(0xB3, {0xF8,0x11,0xF9,0x38,0xFA,0,0xFB,0x11}));
     KMBusVitotrol alternate(&stream, 0x34, 1);
+    CHECK(exchange(alternate, stream, 0x31, {0xFB}) == reply(0xB1, {0xFB,5}));
+    profile(alternate, "openv");
+    CHECK(exchange(alternate, stream, 0x31, {0xFB}) == reply(0xB1, {0xFB,5}));
+    profile(alternate, "wifi");
     CHECK(exchange(alternate, stream, 0x31, {0xFB}) == reply(0xB1, {0xFB,5}));
 }
 
@@ -286,7 +302,8 @@ void allModeCommandsAndIndependentFlags() {
     for (unsigned i = 0; i < 7; ++i) {
         CHECK(device.setOperatingMode(names[i]));
         CHECK(exchange(device, stream, 0) ==
-              reply(0xBF, dataset(0x14, {0,1,commands[i],0,0,0,0,0})));
+              reply(0xBF, dataset(0x14,
+                  {0,1,commands[i],uint8_t(commands[i] == 0xCB ? 20 : 0),0,0,0,0})));
         CHECK(device.getOperatingMode() == (i < 3 ? commands[i] : 0xCA));
         if (i == 3) CHECK(device.getPartyEnabled());
         if (i == 4) CHECK(!device.getPartyEnabled());
@@ -300,6 +317,44 @@ void allModeCommandsAndIndependentFlags() {
     CHECK(device.setOperatingMode("economy_on"));
     CHECK(device.getOperatingMode() == 0xC9);
     CHECK(device.getPartyEnabled() && device.getEconomyEnabled());
+}
+
+void partyTemperatureIsAtomicAndPartOfModeCommand() {
+    FakeStream stream; KMBusVitotrol device(&stream, 0x38, 1);
+    CHECK(device.getPartyRoomTemperature() == 20);
+    KMBusVitotrol::ControlUpdate update;
+    update.hasPartyRoomTemperature = true; update.partyRoomTemperature = 22;
+    CHECK(!device.applyControlUpdate(update));
+    update.hasMode = true; update.mode = "water";
+    CHECK(!device.applyControlUpdate(update));
+    update.mode = "party_on"; update.partyRoomTemperature = 22.5f;
+    CHECK(!device.applyControlUpdate(update));
+    update.partyRoomTemperature = 36;
+    CHECK(!device.applyControlUpdate(update));
+    update.partyRoomTemperature = 4;
+    CHECK(!device.applyControlUpdate(update));
+    CHECK(device.getPartyRoomTemperature() == 20 && !device.getPartyEnabled());
+    update.partyRoomTemperature = 22;
+    CHECK(device.applyControlUpdate(update));
+    CHECK(device.getPartyRoomTemperature() == 22 && device.getPartyEnabled());
+    CHECK(device.getOperatingMode() == 0xCA && device.getPendingCommandCount() == 2);
+    CHECK(exchange(device, stream, 0) == reply(0xBF, dataset(0x20, {200,0,0})));
+    CHECK(exchange(device, stream, 0) ==
+          reply(0xBF, dataset(0x14, {0,1,0xCB,22,0,0,0,0})));
+    CHECK(device.setOperatingMode("party_on"));
+    CHECK(exchange(device, stream, 0) ==
+          reply(0xBF, dataset(0x14, {0,1,0xCB,22,0,0,0,0})));
+
+    FakeStream fullStream; KMBusVitotrol full(&fullStream, 0x38, 1);
+    CHECK(full.setOperatingMode("off"));
+    CHECK(full.setOperatingMode("water"));
+    CHECK(full.setOperatingMode("heat_water"));
+    CHECK(full.getPendingCommandCount() == 4);
+    update.hasProfile = true; update.profile = "openv";
+    CHECK(!full.applyControlUpdate(update));
+    CHECK(full.getPartyRoomTemperature() == 20 && !full.getPartyEnabled());
+    CHECK(full.getOperatingMode() == 0xCA);
+    CHECK(std::string(full.getProtocolProfile()) == "wifi");
 }
 
 void atomicUpdatesAndCapacity() {
@@ -587,6 +642,7 @@ int main() {
         {"WiFi requests and wrapped writes", wifiDatasetRequestAndWrappedWrite},
         {"profile migration and own-slot status", profilesMigratePendingCommandsAndStatus},
         {"all modes and independent flags", allModeCommandsAndIndependentFlags},
+        {"party temperature atomic mode payload", partyTemperatureIsAtomicAndPartOfModeCommand},
         {"atomic updates and capacity", atomicUpdatesAndCapacity},
         {"partial and failed writes", partialAndFailedWrites},
         {"new master traffic aborts stale TX", newMasterTrafficAbortsPendingTransmission},

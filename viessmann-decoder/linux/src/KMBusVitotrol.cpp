@@ -40,7 +40,8 @@ KMBusVitotrol::KMBusVitotrol(Stream* serial, uint8_t modelId, uint8_t slot)
       _frame{}, _frameLength(0), _lastByteMillis(0), _txFrame{},
       _txLength(0), _txOffset(0), _txStartedMillis(0), _txQueued(false),
       _currentRoomTemperature(20), _desiredRoomTemperature(20),
-      _reducedRoomTemperature(16), _operatingMode(0xCA), _lastMasterDataset(0),
+      _reducedRoomTemperature(16), _partyRoomTemperature(20),
+      _operatingMode(0xCA), _lastMasterDataset(0),
       _lastMessageMillis(0), _lastRoomTemperatureSend(0), _crcErrors(0),
       _malformedFrames(0), _unknownCommands(0), _hasReceivedMessage(false),
       _openv(false), _party(false), _economy(false) {
@@ -55,7 +56,8 @@ KMBusVitotrol::KMBusVitotrol(Stream* serial, uint8_t modelId, uint8_t slot)
 
 bool KMBusVitotrol::applyControlUpdate(const ControlUpdate& update) {
     if (!update.hasRoomTemperature && !update.hasDesiredRoomTemperature &&
-        !update.hasReducedRoomTemperature && !update.hasMode && !update.hasProfile)
+        !update.hasReducedRoomTemperature && !update.hasPartyRoomTemperature &&
+        !update.hasMode && !update.hasProfile)
         return false;
     uint8_t command = 0;
     bool openv = _openv;
@@ -74,7 +76,12 @@ bool KMBusVitotrol::applyControlUpdate(const ControlUpdate& update) {
         (update.hasReducedRoomTemperature &&
          (!temperatureValid(update.reducedRoomTemperature, 5, 35) ||
           truncf(update.reducedRoomTemperature) != update.reducedRoomTemperature)) ||
+        (update.hasPartyRoomTemperature &&
+         (!temperatureValid(update.partyRoomTemperature, 5, 35) ||
+          truncf(update.partyRoomTemperature) != update.partyRoomTemperature ||
+          !update.hasMode)) ||
         (update.hasMode && !modeCommand(update.mode, command))) return false;
+    if (update.hasPartyRoomTemperature && command != 0xCB) return false;
     const unsigned needed = unsigned(update.hasRoomTemperature) +
         unsigned(update.hasDesiredRoomTemperature) +
         unsigned(update.hasReducedRoomTemperature) + unsigned(update.hasMode);
@@ -86,6 +93,7 @@ bool KMBusVitotrol::applyControlUpdate(const ControlUpdate& update) {
     _openv = openv;
     if (profileChanged) {
         _registers[0] = _openv ? 0 : 0x12;
+        _registers[0xFB] = _openv ? 0x05 : (_modelId == 0x38 ? 0x11 : 0x05);
         for (uint8_t i = 0; i < _queueCount; ++i) {
             QueuedDataset& item = _queue[(_queueHead + i) % DATASET_QUEUE_SIZE];
             item.id = datasetId(item.kind);
@@ -116,7 +124,11 @@ bool KMBusVitotrol::applyControlUpdate(const ControlUpdate& update) {
         queueDataset(REDUCED, data, sizeof(data));
     }
     if (update.hasMode) {
-        const uint8_t data[8] = {0, _slot, command, 0, 0, 0, 0, 0};
+        if (update.hasPartyRoomTemperature)
+            _partyRoomTemperature = update.partyRoomTemperature;
+        const uint8_t partyTemperature = command == 0xCB ?
+            static_cast<uint8_t>(_partyRoomTemperature) : 0;
+        const uint8_t data[8] = {0, _slot, command, partyTemperature, 0, 0, 0, 0};
         queueDataset(MODE, data, sizeof(data));
         if (command <= 0xCA) _operatingMode = command;
         else if (command == 0xCB || command == 0xCC) _party = command == 0xCB;
@@ -448,6 +460,7 @@ bool KMBusVitotrol::isOnline() const {
 float KMBusVitotrol::getCurrentRoomTemperature() const { return _currentRoomTemperature; }
 float KMBusVitotrol::getDesiredRoomTemperature() const { return _desiredRoomTemperature; }
 float KMBusVitotrol::getReducedRoomTemperature() const { return _reducedRoomTemperature; }
+float KMBusVitotrol::getPartyRoomTemperature() const { return _partyRoomTemperature; }
 const char* KMBusVitotrol::getProtocolProfile() const { return _openv ? "openv" : "wifi"; }
 uint8_t KMBusVitotrol::getPendingCommandCount() const { return _queueCount; }
 uint8_t KMBusVitotrol::getOperatingMode() const { return _operatingMode; }

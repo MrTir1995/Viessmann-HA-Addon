@@ -121,10 +121,11 @@ class RemoteApiTests(unittest.TestCase):
             self.assertEqual(before[key], after[key])
         for _ in range(4):
             self.exchange(telegram(0))
-        self.assertEqual(self.post({"mode": "party_on"})[0], 200)
+        self.assertEqual(self.post({"mode": "party_on", "party_room_temperature": 22})[0], 200)
         state = self.state()
         self.assertEqual(state["mode"], 0xC9)
         self.assertTrue(state["requested_party_mode"])
+        self.assertEqual(state["party_room_temperature"], 22)
         self.assertEqual(self.post({"mode": "economy_on"})[0], 200)
         self.assertTrue(self.state()["requested_economy_mode"])
 
@@ -138,6 +139,8 @@ class RemoteApiTests(unittest.TestCase):
             b'{"desired_room_temperature":20.5}', b'{"mode":"unknown"}',
             b'{"room_temperature":22,"desired_room_temperature":99}',
             b'{"nested":{"mode":"off"}}', b'{"profile":"unknown"}',
+            b'{"party_room_temperature":22}',
+            b'{"mode":"off","party_room_temperature":22}',
         ]:
             with self.subTest(body=body):
                 self.assertEqual(self.request("/api/remote", body)[0], 400)

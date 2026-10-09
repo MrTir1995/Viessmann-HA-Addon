@@ -89,6 +89,7 @@ The web page is `/remote`; the read API is `GET /api/remote`. `POST /api/remote`
 {"desired_room_temperature": 21}
 {"reduced_room_temperature": 16}
 {"mode": "heat_water"}
+{"mode": "party_on", "party_room_temperature": 22}
 {"profile": "openv"}
 ```
 
@@ -100,9 +101,14 @@ is identified in WiFiVitotrol's temperature-encoding comments and still needs
 verification on the target heater. Several fields can be sent in one JSON object;
 the update is all-or-nothing. Unknown/duplicate fields and malformed JSON are
 rejected. The queue is limited, and commands wait for a master ping.
+Party mode (`0xCB`) includes the party temperature in the fourth command-data
+byte, as the published telegram examples show. `party_room_temperature` is an
+integral 5–35 °C value and must be combined with `mode: "party_on"`; it is not an
+unverified standalone temperature-write command. Without an explicit value,
+party-on uses the local party setpoint (initially 20 °C), never an unintended zero.
 
 `GET /api/remote` preserves existing fields and adds `profile`,
-`reduced_room_temperature`, `requested_party_mode`, `requested_economy_mode`,
+`reduced_room_temperature`, `party_room_temperature`, `requested_party_mode`, `requested_economy_mode`,
 `pending_commands`, `crc_errors`, `malformed_frames`, `unknown_commands`,
 `outside_temperature`, `heating_enabled`, and `datasets`. Each received dataset
 has `id`, XOR-decoded `data` bytes and `age_ms`. Missing interpreted measurements
@@ -130,7 +136,7 @@ truncated to a byte or inserted into remote frames. The sources do not establish
 a complete conversion between these addresses and KM-Bus datasets.
 
 Schedules, clock/date updates, arbitrary controller-memory access, all other
-temperature/error/status fields and an adjustable party temperature are not
+temperature/error/status fields and a standalone party-temperature command are not
 implemented from incomplete or opaque examples. A list of command codes alone
 does not establish the required payload. This is still not a complete Vitotrol
 300 replacement. The UART stays at **1200 8E1**, as both OpenV and WiFiVitotrol

@@ -627,7 +627,7 @@ bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& up
             }
         } else {
             if (key != "room_temperature" && key != "desired_room_temperature" &&
-                key != "reduced_room_temperature") return false;
+                key != "reduced_room_temperature" && key != "party_room_temperature") return false;
             const size_t start = position;
             if (position < body.size() && body[position] == '-') ++position;
             if (position >= body.size() || body[position] < '0' || body[position] > '9')
@@ -664,9 +664,12 @@ bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& up
                 if (key == "desired_room_temperature") {
                     update.hasDesiredRoomTemperature = true;
                     update.desiredRoomTemperature = value;
-                } else {
+                } else if (key == "reduced_room_temperature") {
                     update.hasReducedRoomTemperature = true;
                     update.reducedRoomTemperature = value;
+                } else {
+                    update.hasPartyRoomTemperature = true;
+                    update.partyRoomTemperature = value;
                 }
             }
         }
@@ -675,7 +678,8 @@ bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& up
         const char separator = body[position++];
         if (separator == '}') {
             skipSpace();
-            return position == body.size();
+            return position == body.size() && (!update.hasPartyRoomTemperature ||
+                   (update.hasMode && mode == "party_on"));
         }
         if (separator != ',') return false;
     }
@@ -719,6 +723,8 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
         body += hasHeating ? (heatingEnabled ? "true" : "false") : "null";
         body += ",\"requested_party_mode\":";
         body += connected && vitotrol->getPartyEnabled() ? "true" : "false";
+        body += ",\"party_room_temperature\":" +
+                std::to_string(connected ? vitotrol->getPartyRoomTemperature() : 0.0f);
         body += ",\"requested_economy_mode\":";
         body += connected && vitotrol->getEconomyEnabled() ? "true" : "false";
         body += ",\"datasets\":[";
@@ -1456,7 +1462,9 @@ Gesendet wird nur nach Freigabe durch den Master. Vor Verwendung am Zielgerät p
 <option value="heat_water">Heizen + Warmwasser</option><option value="water">Nur Warmwasser</option>
 <option value="off">Abschaltbetrieb</option><option value="party_on">Partybetrieb an</option>
 <option value="party_off">Partybetrieb aus</option><option value="economy_on">Sparbetrieb an</option>
-<option value="economy_off">Sparbetrieb aus</option></select></label><button type="submit">Übermitteln</button></form>
+<option value="economy_off">Sparbetrieb aus</option></select></label>
+<label>Party-Soll °C (bei Party an) <input id="party" type="number" min="5" max="35" step="1" required></label>
+<button type="submit">Übermitteln</button></form>
 <p id="requested"></p></section>
 <section><h2>Protokollvariante</h2>
 <p>Die Quellen widersprechen sich bei Schreibquittierungen und Datensatzzuordnung.
@@ -1473,7 +1481,7 @@ Alter beachten: alte Daten sind keine aktuellen Messwerte.</p><pre id="datasets"
 const el=id=>document.getElementById(id);
 const dirty=new Set();
 const revisions=new Map();
-['room','desired','reduced','mode','profile'].forEach(id=>el(id).addEventListener('input',()=>{
+['room','desired','reduced','party','mode','profile'].forEach(id=>el(id).addEventListener('input',()=>{
     dirty.add(id);revisions.set(id,(revisions.get(id)||0)+1);
 }));
 function sync(id,value){
@@ -1482,11 +1490,14 @@ function sync(id,value){
 async function send(value,id){
     const feedback=el('feedback');
     const revision=revisions.get(id)||0;
+    const partyRevision=revisions.get('party')||0;
     try{
         const response=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
         const data=await response.json();
         if(!response.ok)throw new Error(data.error||'HTTP '+response.status);
         if((revisions.get(id)||0)===revision)dirty.delete(id);
+        if(value.party_room_temperature!==undefined &&
+           (revisions.get('party')||0)===partyRevision)dirty.delete('party');
         feedback.textContent='Vorgabe übernommen; Übertragung erfolgt bei Master-Freigabe.';
         await refresh();
     }catch(error){feedback.textContent='Nicht übernommen: '+error.message;}
@@ -1496,7 +1507,9 @@ async function send(value,id){
 .forEach(([form,id,key])=>el(form).onsubmit=event=>{
     event.preventDefault();
     const value=(id==='mode'||id==='profile')?el(id).value:Number(el(id).value);
-    send({[key]:value},id);
+    const command={[key]:value};
+    if(id==='mode'&&value==='party_on')command.party_room_temperature=Number(el('party').value);
+    send(command,id);
 });
 async function refresh(){
     try{
@@ -1505,7 +1518,8 @@ async function refresh(){
         const data=await response.json();
         el('state').textContent=data.model+' · Slot '+data.slot+' · '+(data.online?'Master erreichbar':'Keine aktuellen Master-Telegramme');
         sync('room',data.room_temperature);sync('desired',data.desired_room_temperature);
-        sync('reduced',data.reduced_room_temperature);sync('profile',data.profile);
+        sync('reduced',data.reduced_room_temperature);sync('party',data.party_room_temperature);
+        sync('profile',data.profile);
         const baseMode={200:'off',201:'water',202:'heat_water'};
         if(baseMode[data.mode])sync('mode',baseMode[data.mode]);
         el('requested').textContent='Lokale Vorgaben: Betriebsart 0x'+data.mode.toString(16).toUpperCase()+

@@ -2145,21 +2145,24 @@ const char* getBusLogsHTML() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Viessmann Decoder - Bus-Logs</title>
 <style>
+:root{color-scheme:light;--page:#fafafa;--card:#fff;--text:#212121;--muted:#727272;--line:#e0e0e0;--primary:#03a9f4;--log:#212121;--log-text:#e0e0e0}
+:root[data-theme="dark"]{color-scheme:dark;--page:#121212;--card:#1e1e1e;--text:#f5f5f5;--muted:#bdbdbd;--line:#424242;--primary:#1565c0;--log:#090909;--log-text:#eee}
 *{box-sizing:border-box}
-body{margin:0;font-family:Roboto,Noto,sans-serif;background:#fafafa;color:#212121}
-header{background:#03a9f4;color:white;padding:16px 24px;box-shadow:0 2px 4px #0003}
+body{margin:0;font-family:Roboto,Noto,sans-serif;background:var(--page);color:var(--text)}
+header{background:var(--primary);color:white;padding:16px 24px;box-shadow:0 2px 4px #0003}
 header nav{max-width:1152px;margin:auto;display:flex;align-items:center;gap:24px}
 header a{color:white;text-decoration:none}
 h1{font-size:20px;font-weight:400;margin:0}
 main{max-width:1200px;margin:24px auto;padding:0 24px}
-.card{background:white;border-radius:8px;padding:20px;box-shadow:0 2px 5px #0003}
+.card{background:var(--card);border-radius:8px;padding:20px;box-shadow:0 2px 5px #0003}
 .controls{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-button{background:#03a9f4;color:white;border:0;border-radius:4px;padding:10px 16px;cursor:pointer}
-pre{background:#212121;color:#e0e0e0;padding:16px;border-radius:4px;overflow:auto;max-height:65vh;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
-#status{color:#727272}
+button{background:var(--primary);color:white;border:0;border-radius:4px;padding:10px 16px;cursor:pointer}
+pre{background:var(--log);color:var(--log-text);padding:16px;border-radius:4px;overflow:auto;max-height:65vh;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+#status{color:var(--muted)}
+.theme-toggle{margin-left:auto;border:1px solid rgba(255,255,255,.65);border-radius:20px;padding:8px 12px;background:transparent;color:white;cursor:pointer}
 @media(max-width:768px){main{padding:0 16px}}
 </style></head><body>
-<header><nav><a href=".">← Dashboard</a><h1>Bus-Logs</h1></nav></header>
+<header><nav><a href=".">← Dashboard</a><h1>Bus-Logs</h1><button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false">Dark theme</button></nav></header>
 <main><div class="card">
 <p>Bus-Kommunikation: RX = empfangen, TX = gesendet. Anzeige als Hexadezimaldaten mit Zeitstempel.</p>
 <p>Die letzten 500 Einträge bleiben bis zum Neustart im Arbeitsspeicher.
@@ -2170,6 +2173,10 @@ Byte-Gruppen sind keine Protokollrahmen; bei Signalinvertierung werden die logis
 <pre id="logs">Noch keine Bus-Kommunikation aufgezeichnet.</pre>
 </div></main>
 <script>
+const themeButton=document.getElementById('themeToggle');
+function setTheme(theme){document.documentElement.dataset.theme=theme;themeButton.textContent=theme==='dark'?'Light theme':'Dark theme';themeButton.setAttribute('aria-pressed',theme==='dark'?'true':'false');}
+try{setTheme(localStorage.getItem('viessmann-decoder-theme')==='dark'?'dark':'light');}catch(error){setTheme('light');}
+themeButton.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';setTheme(theme);try{localStorage.setItem('viessmann-decoder-theme',theme);}catch(error){}});
 const logs=document.getElementById('logs'),status=document.getElementById('status');
 const pause=document.getElementById('pause'),follow=document.getElementById('follow');
 let paused=false;
@@ -2204,15 +2211,18 @@ const char* getRemoteHTML() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Viessmann Decoder - Vitotrol</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#fafafa;color:#212121;font-family:Roboto,Noto,sans-serif}
-header{background:#03a9f4;color:white;padding:16px 24px}header a{color:white}
+:root{color-scheme:light;--page:#fafafa;--card:#fff;--text:#212121;--muted:#727272;--line:#ccc;--primary:#03a9f4}
+:root[data-theme="dark"]{color-scheme:dark;--page:#121212;--card:#1e1e1e;--text:#f5f5f5;--muted:#bdbdbd;--line:#555;--primary:#1565c0}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--text);font-family:Roboto,Noto,sans-serif}
+header{background:var(--primary);color:white;padding:16px 24px}header a{color:white}
 main{max-width:1000px;margin:24px auto;padding:0 16px}
-section{background:white;padding:20px;margin-bottom:20px;border-radius:8px;box-shadow:0 2px 5px #0003}
+section{background:var(--card);padding:20px;margin-bottom:20px;border-radius:8px;box-shadow:0 2px 5px #0003}
 h1{font-size:20px}form{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
-input,select,button{padding:10px;border:1px solid #ccc;border-radius:4px;font:inherit}
-button{background:#03a9f4;color:white;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere}
+input,select,button{padding:10px;border:1px solid var(--line);border-radius:4px;font:inherit;background:var(--card);color:var(--text)}
+button{background:var(--primary);color:white;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.theme-toggle{float:right;border-color:rgba(255,255,255,.65);background:transparent;color:white;cursor:pointer}
 </style></head><body>
-<header><a href=".">← Dashboard</a> · <a href="logs">Bus-Logs</a></header>
+<header><button class="theme-toggle" id="themeToggle" type="button" aria-pressed="false">Dark theme</button><a href=".">← Dashboard</a> · <a href="logs">Bus-Logs</a></header>
 <main><h1>Vitotrol-Steuerung (experimentell)</h1>
 <section><p id="state" role="status">Status wird geladen…</p>
 <p>1200 Baud, 8E1. Die angezeigten Steuerwerte sind lokale Vorgaben, keine Bestätigung der Regelung.
@@ -2245,6 +2255,10 @@ Broadcasts werden ohne Antwort verarbeitet. Das Profil gilt bis Neustart oder Ne
 <p>Nur belegte Felder werden interpretiert. Rohdatensätze sind bereits XOR-dekodiert.
 Alter beachten: alte Daten sind keine aktuellen Messwerte.</p><pre id="datasets">Noch keine Datensätze.</pre></section>
 </main><script>
+const themeButton=document.getElementById('themeToggle');
+function setTheme(theme){document.documentElement.dataset.theme=theme;themeButton.textContent=theme==='dark'?'Light theme':'Dark theme';themeButton.setAttribute('aria-pressed',theme==='dark'?'true':'false');}
+try{setTheme(localStorage.getItem('viessmann-decoder-theme')==='dark'?'dark':'light');}catch(error){setTheme('light');}
+themeButton.addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';setTheme(theme);try{localStorage.setItem('viessmann-decoder-theme',theme);}catch(error){}});
 const el=id=>document.getElementById(id);
 const dirty=new Set();
 const revisions=new Map();

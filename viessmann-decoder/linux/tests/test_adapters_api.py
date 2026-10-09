@@ -179,7 +179,7 @@ class AdapterApiTests(unittest.TestCase):
                     self.assertEqual(self.request(prefix + route)[0], 200)
             self.assertIn(b"adapter", self.request(prefix + "/settings")[1])
             devices_page = self.request(prefix + "/devices")[1]
-            self.assertIn(b"id='adapter-settings-add'", devices_page)
+            self.assertIn(b'id="adapter-settings-add"', devices_page)
             self.assertIn(b"id='themeToggle'", devices_page)
             self.assertEqual(self.state(prefix + "/data")["participants"], [])
         for route in ["/data", "/api/remote", "/api/settings", "/settings", "/health", "/"]:
@@ -339,6 +339,7 @@ class AdapterApiTests(unittest.TestCase):
             self.assertIn(relative, dashboard)
         for route in ["/settings", "/devices", "/logs", "/remote"]:
             page = self.request(base + route)[1]
+            self.assertIn(b"themeToggle", page)
             self.assertNotIn(b'window.location.href="/"', page)
             self.assertNotIn(b'window.location.href=\\"/\\"', page)
             self.assertNotIn(b"href='/'", page)

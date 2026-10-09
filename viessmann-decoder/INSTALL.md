@@ -37,9 +37,9 @@
 2. Konfigurieren Sie Ihre Einstellungen:
    ```yaml
    serial_port: /dev/ttyUSB0
-   baud_rate: 9600
-   protocol: vbus
-   serial_config: 8N1
+   baud_rate: 1200
+   protocol: km_remote
+   serial_config: 8E1
    log_level: info
    ```
 
@@ -71,9 +71,9 @@
 | Option          | Typ    | Standard       | Beschreibung                                          |
 | --------------- | ------ | -------------- | ----------------------------------------------------- |
 | `serial_port`   | string | `/dev/ttyUSB0` | Serieller Port für die Verbindung                     |
-| `baud_rate`     | list   | `9600`         | Baudrate (2400, 4800, 9600, 19200, 38400, 115200)     |
-| `protocol`      | list   | `vbus`         | Protokoll-Typ (vbus, kw, p300, km)                    |
-| `serial_config` | list   | `8N1`          | Serielle Konfiguration (8N1, 8E2)                     |
+| `baud_rate`     | list   | `1200`         | Baudrate (1200 für KM-Bus-Vitotrol, weitere je nach Protokoll) |
+| `protocol`      | list   | `km_remote`    | Protokoll-Typ (vbus, kw, p300, km, km_remote)         |
+| `serial_config` | list   | `8E1`          | Serielle Konfiguration (8N1, 8E1, 8E2)                |
 | `log_level`     | string | `info`         | Log-Level (trace, debug, info, warning, error, fatal) |
 | `usbip_enable`  | bool   | `false`        | USB/IP Remote-Zugriff aktivieren                      |
 | `usbip_host`    | string | -              | USB/IP Server IP-Adresse                              |

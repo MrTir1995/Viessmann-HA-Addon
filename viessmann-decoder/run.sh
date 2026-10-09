@@ -18,9 +18,9 @@ CONFIG_FILE="/data/options.json"
 
 if [[ -f "${CONFIG_FILE}" ]]; then
     SERIAL_PORT=$(jq -r '.serial_port // "/dev/ttyUSB0"' "${CONFIG_FILE}")
-    BAUD_RATE=$(jq -r '.baud_rate // 9600' "${CONFIG_FILE}")
-    PROTOCOL=$(jq -r '.protocol // "vbus"' "${CONFIG_FILE}")
-    SERIAL_CONFIG=$(jq -r '.serial_config // "8N1"' "${CONFIG_FILE}")
+    BAUD_RATE=$(jq -r '.baud_rate // 1200' "${CONFIG_FILE}")
+    PROTOCOL=$(jq -r '.protocol // "km_remote"' "${CONFIG_FILE}")
+    SERIAL_CONFIG=$(jq -r '.serial_config // "8E1"' "${CONFIG_FILE}")
     REMOTE_MODEL=$(jq -r '.remote_model // "vitotrol300"' "${CONFIG_FILE}")
     REMOTE_SLOT=$(jq -r '.remote_slot // 1' "${CONFIG_FILE}")
     INVERT_SERIAL=$(jq -r '.invert_serial // false' "${CONFIG_FILE}")
@@ -32,9 +32,9 @@ if [[ -f "${CONFIG_FILE}" ]]; then
 else
     log_info "No options.json found, using standalone environment configuration"
     SERIAL_PORT="${SERIAL_PORT:-/dev/ttyUSB0}"
-    BAUD_RATE="${BAUD_RATE:-9600}"
-    PROTOCOL="${PROTOCOL:-vbus}"
-    SERIAL_CONFIG="${SERIAL_CONFIG:-8N1}"
+    BAUD_RATE="${BAUD_RATE:-1200}"
+    PROTOCOL="${PROTOCOL:-km_remote}"
+    SERIAL_CONFIG="${SERIAL_CONFIG:-8E1}"
     REMOTE_MODEL="${REMOTE_MODEL:-vitotrol300}"
     REMOTE_SLOT="${REMOTE_SLOT:-1}"
     INVERT_SERIAL="${INVERT_SERIAL:-false}"

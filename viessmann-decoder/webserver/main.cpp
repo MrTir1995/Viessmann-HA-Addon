@@ -1099,8 +1099,8 @@ void printHelp(const char* progname) {
     printf("\nUsage: %s [options]\n", progname);
     printf("  -p <port>      Serial port (default: /dev/ttyUSB0)\n");
     printf("  -b <baud>      Baud rate (KM-Bus remote mode uses fixed 1200)\n");
-    printf("  -t <protocol>  Protocol type: vbus, kw, p300, km, km_remote (default: vbus)\n");
-    printf("  -c <config>    Serial config: 8N1, 8E1, 8E2 (default: 8N1)\n");
+    printf("  -t <protocol>  Protocol type: vbus, kw, p300, km, km_remote (default: km_remote)\n");
+    printf("  -c <config>    Serial config: 8N1, 8E1, 8E2 (KM-Bus remote: 8E1)\n");
     printf("  -m <model>     Emulated remote: vitotrol200 or vitotrol300\n");
     printf("  -s <slot>      KM-Bus heating circuit slot: 1, 2, or 3\n");
     printf("  -i <invert>    Invert serial signals: true, false (default: false)\n");
@@ -1111,9 +1111,9 @@ void printHelp(const char* progname) {
 int main(int argc, char* argv[]) {
     // Default configuration
     config.serialPort = "/dev/ttyUSB0";
-    config.baudRate = 9600;
-    config.protocol = PROTOCOL_VBUS;
-    config.serialConfig = SERIAL_8N1;
+    config.baudRate = 1200;
+    config.protocol = PROTOCOL_KM_REMOTE;
+    config.serialConfig = SERIAL_8E1;
     config.invertSerial = false;
     config.webPort = 8099;
     config.remoteModelId = 0x38;

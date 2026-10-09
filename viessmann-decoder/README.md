@@ -25,6 +25,8 @@ Basis, reicht ausschließlich den seriellen Adapter durch und veröffentlicht Po
 Container-Healthcheck: `/health`. Kein `privileged`-Modus erforderlich.
 Auf dem Decoder-Host muss der passende Busadapter angeschlossen sein; der
 Netzwerkzugriff von Home Assistant erfolgt über HTTP, nicht über USB/IP.
+Standardmäßig startet der Container als KM-Bus-Vitotrol-Slave
+(`km_remote`, 1200 Baud, 8E1, Vitotrol 300, Steckplatz 1).
 
 Adapter und Protokoll können beim Start gesetzt werden:
 
@@ -45,13 +47,13 @@ Ohne Compose:
 docker build -t viessmann-decoder:local .
 docker run -d --name viessmann-decoder --init --restart unless-stopped \
   --device /dev/ttyUSB0:/dev/ttyUSB0 -p 8099:8099 \
-  -e SERIAL_PORT=/dev/ttyUSB0 -e PROTOCOL=vbus \
-  -e BAUD_RATE=9600 -e SERIAL_CONFIG=8N1 viessmann-decoder:local
+  -e SERIAL_PORT=/dev/ttyUSB0 -e PROTOCOL=km_remote \
+  -e BAUD_RATE=1200 -e SERIAL_CONFIG=8E1 viessmann-decoder:local
 ```
 
 Ohne `/data/options.json` liest `run.sh` die Umgebungsvariablen `SERIAL_PORT`,
 `BAUD_RATE`, `PROTOCOL`, `SERIAL_CONFIG`, `REMOTE_MODEL`, `REMOTE_SLOT` und
-`INVERT_SERIAL`. Standardwerte entsprechen dem Add-on (VBUS, 9600 Baud, 8N1).
+`INVERT_SERIAL`. Die Standardwerte sind `km_remote`, 1200 Baud und 8E1.
 Für KW/P300 Baudrate und Parität passend zur Anlage einstellen. `km_remote`
 erzwingt im Programm 1200 Baud/8E1; `REMOTE_MODEL` (`vitotrol200`/`vitotrol300`),
 `REMOTE_SLOT` (1–3) und `INVERT_SERIAL` (`true`/`false`) bleiben konfigurierbar.
@@ -158,7 +160,7 @@ The protocol used by your heating system.
 - `kw` - KW-Bus (VS1) protocol (Vitotronic 100/200/300, older systems)
 - `p300` - P300/VS2 (Optolink) protocol (modern Vitodens boilers)
 - `km` - KM-Bus protocol (remote controls, expansion modules)
-- `km_remote` - Experimental KM-Bus slave that emulates a Vitotrol remote
+- `km_remote` - Experimental KM-Bus slave that emulates a Vitotrol remote (default)
 
 ### serial_config (required)
 

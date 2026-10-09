@@ -109,6 +109,44 @@ class RemoteApiTests(unittest.TestCase):
         self.assertIn(b"TX", body)
         self.assertIn(b"Anzeige pausieren", self.request("/logs")[1])
 
+    def test_unsolicited_19_capture_is_retained_without_inventing_fault_mapping(self):
+        packet = bytes.fromhex("11 00 BF 0B 01 01 19 55 2D 33 8F")
+        self.assertEqual(packet, telegram(0xBF, bytes.fromhex("19 55 2D")))
+        for profile in ("wifi", "openv"):
+            with self.subTest(profile=profile):
+                self.assertEqual(self.post({"profile": profile})[0], 200)
+                before = self.state()
+                for _ in range(2):
+                    if profile == "wifi":
+                        reply = self.exchange(packet)
+                        self.assertEqual(reply[:6], bytes.fromhex("00 11 80 08 01 01"))
+                        self.assertEqual(len(reply), 8)
+                    else:
+                        self.exchange(packet, expect_reply=False)
+                state = self.state()
+                dataset = next(item for item in state["datasets"] if item["id"] == 0x19)
+                self.assertEqual(dataset["data"], [0xFF, 0x87])
+                self.assertTrue(state["online"])
+                self.assertEqual(state["last_master_dataset"], 0x19)
+                self.assertFalse(state["measurements_verified"])
+                self.assertIsNone(state["controller_fault"])
+                self.assertIsNone(state["heating_enabled"])
+                for key in ("room_temperature", "desired_room_temperature", "mode",
+                            "pending_commands", "requested_party_mode", "requested_economy_mode"):
+                    self.assertEqual(state[key], before[key])
+                corrupt = bytearray(packet)
+                corrupt[-2] ^= 1
+                self.exchange(corrupt, expect_reply=False)
+                after = self.state()
+                self.assertEqual(after["crc_errors"], state["crc_errors"] + 1)
+                self.assertEqual(next(item for item in after["datasets"]
+                                      if item["id"] == 0x19)["data"], [0xFF, 0x87])
+                data = json.loads(self.request("/data")[1])
+                self.assertIsNone(data["remote"]["controller_fault"])
+                self.assertIsNone(data["remote"]["heating_enabled"])
+                self.assertEqual(data["pumps"], [])
+                self.assertEqual(data["relays"], [])
+
     def test_atomic_commands_and_requested_state(self):
         self.exchange(telegram(0))
         self.assertEqual(self.post({

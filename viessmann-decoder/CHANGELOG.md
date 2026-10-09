@@ -8,6 +8,7 @@ All notable changes to the Viessmann Decoder Home Assistant Add-on will be docum
 - Prepared a new add-on/image version containing the serial adapter management and light/dark theme controls added after the 2.3.0 image was published.
 - Disabled caching of web pages to avoid retaining an outdated interface after updates.
 - Updated the frontend test double to support the theme controls.
+- Added a regression for the supplied unsolicited dataset `0x19` capture, retaining raw data without guessing an alarm bit or F4/F5 mapping.
 - Unified supported baud rates across settings, startup and serial configuration; 2400 baud now reaches the device and 57600 baud is available for the primary adapter.
 - Enforced strict primary-settings JSON validation, escaped serial paths in JSON, and reloaded saved settings for native binary starts.
 - Corrected KM-remote dashboard readiness and removed unsupported remote-control links for other protocols.

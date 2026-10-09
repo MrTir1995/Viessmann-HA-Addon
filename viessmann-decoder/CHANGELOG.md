@@ -2,6 +2,25 @@
 
 All notable changes to the Viessmann Decoder Home Assistant Add-on will be documented in this file.
 
+## [2.3.1] - 2026-10-09
+
+### Fixed
+- Prepared a new add-on/image version containing the serial adapter management and light/dark theme controls added after the 2.3.0 image was published.
+- Disabled caching of web pages to avoid retaining an outdated interface after updates.
+- Updated the frontend test double to support the theme controls.
+- Added a regression for the supplied unsolicited dataset `0x19` capture, retaining raw data without guessing an alarm bit or F4/F5 mapping.
+- Unified supported baud rates across settings, startup and serial configuration; 2400 baud now reaches the device and 57600 baud is available for the primary adapter.
+- Enforced strict primary-settings JSON validation, escaped serial paths in JSON, and reloaded saved settings for native binary starts.
+- Corrected KM-remote dashboard readiness and removed unsupported remote-control links for other protocols.
+- Hardened decoder payload bounds, interrupted-frame recovery, discovery initialization and rollover-safe timing; Linux compatibility files now share the canonical decoder.
+- Fixed logger capacity/statistics, scheduler channel bounds and MQTT discovery publication/retries.
+- Corrected container build context and aligned the local builder with Alpine 3.19 and the requested architecture.
+- Separated diagnostic and bus UARTs in ESP8266 examples, corrected historical query ranges and used an 8E2-capable hardware UART in the KW1 example.
+
+### Notes
+- Legacy `km` transmit framing remains unverified and unchanged; correcting it safely requires matching bus captures. `km_remote` uses a separate implementation.
+- Hardware response timing and Arduino-board compatibility require validation on the target controller/board.
+
 ## [2.3.0] - 2026-10-09
 
 ### Added

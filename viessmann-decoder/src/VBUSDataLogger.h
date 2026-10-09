@@ -38,7 +38,7 @@ class VBUSDataLogger {
     // Configuration
     void begin();
     void setLogInterval(uint32_t intervalSeconds);
-    void setMaxDataPoints(uint16_t maxPoints);
+    void setMaxDataPoints(uint16_t maxPoints);  // Zero disables storage
     
     // Logging control
     void loop();

@@ -23,6 +23,7 @@
 
 #if defined(ESP32)
   #include <WiFi.h>
+  #define debugSerial Serial
   #include <WebServer.h>
   #include <Preferences.h>
   #define WEBSERVER_CLASS WebServer
@@ -75,7 +76,8 @@ Config config = {
   HardwareSerial vbusSerial(2);  // Use Serial2 on ESP32
 #elif defined(ESP8266)
   // ESP8266 uses Serial for communication (swap pins)
-  #define vbusSerial Serial
+  HardwareSerial& vbusSerial = Serial;
+  #define debugSerial Serial1  // TX-only diagnostics on GPIO2, separate from the bus UART.
 #endif
 
 VBUSDecoder vbus(&vbusSerial);
@@ -113,27 +115,27 @@ String getStatusHTML();
 // ============================================================================
 void setup() {
   // Initialize debug serial
-  Serial.begin(115200);
+  debugSerial.begin(115200);
   delay(1000);
-  Serial.println("\n\nViessmann Multi-Protocol Library - Web Server Configuration");
+  debugSerial.println("\n\nViessmann Multi-Protocol Library - Web Server Configuration");
   
   // Load configuration from flash
   loadConfig();
   
   // Connect to WiFi
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
+  debugSerial.print("Connecting to WiFi: ");
+  debugSerial.println(ssid);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    debugSerial.print(".");
   }
   
-  Serial.println("\nWiFi connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  debugSerial.println("\nWiFi connected!");
+  debugSerial.print("IP address: ");
+  debugSerial.println(WiFi.localIP());
   
   // Apply configuration to serial port and decoder
   applyConfig();
@@ -148,9 +150,9 @@ void setup() {
   
   // Start web server
   server.begin();
-  Serial.println("Web server started");
-  Serial.print("Access configuration at: http://");
-  Serial.println(WiFi.localIP());
+  debugSerial.println("Web server started");
+  debugSerial.print("Access configuration at: http://");
+  debugSerial.println(WiFi.localIP());
 }
 
 // ============================================================================
@@ -174,9 +176,9 @@ void loadConfig() {
     config.serialConfig = preferences.getUChar("serialCfg", 0);
     config.rxPin = preferences.getUChar("rxPin", 16);
     config.txPin = preferences.getUChar("txPin", 17);
-    Serial.println("Configuration loaded from preferences");
+    debugSerial.println("Configuration loaded from preferences");
   } else {
-    Serial.println("Using default configuration");
+    debugSerial.println("Using default configuration");
   }
   
   preferences.end();
@@ -187,9 +189,9 @@ void loadConfig() {
   
   if (tempConfig.magic == CONFIG_MAGIC) {
     config = tempConfig;
-    Serial.println("Configuration loaded from EEPROM");
+    debugSerial.println("Configuration loaded from EEPROM");
   } else {
-    Serial.println("Using default configuration");
+    debugSerial.println("Using default configuration");
   }
 #endif
 }
@@ -206,37 +208,37 @@ void saveConfig() {
   preferences.putUChar("rxPin", config.rxPin);
   preferences.putUChar("txPin", config.txPin);
   preferences.end();
-  Serial.println("Configuration saved to preferences");
+  debugSerial.println("Configuration saved to preferences");
 #elif defined(USE_EEPROM)
   EEPROM.put(0, config);
   EEPROM.commit();
-  Serial.println("Configuration saved to EEPROM");
+  debugSerial.println("Configuration saved to EEPROM");
 #endif
 }
 
 void applyConfig() {
-  Serial.println("Applying configuration...");
-  Serial.print("Protocol: ");
+  debugSerial.println("Applying configuration...");
+  debugSerial.print("Protocol: ");
   
   switch(config.protocol) {
     case PROTOCOL_VBUS:
-      Serial.println("VBUS");
+      debugSerial.println("VBUS");
       break;
     case PROTOCOL_KW:
-      Serial.println("KW-Bus");
+      debugSerial.println("KW-Bus");
       break;
     case PROTOCOL_P300:
-      Serial.println("P300");
+      debugSerial.println("P300");
       break;
     case PROTOCOL_KM:
-      Serial.println("KM-Bus");
+      debugSerial.println("KM-Bus");
       break;
   }
   
-  Serial.print("Baud Rate: ");
-  Serial.println(config.baudRate);
-  Serial.print("Serial Config: ");
-  Serial.println(config.serialConfig == 0 ? "8N1" : "8E2");
+  debugSerial.print("Baud Rate: ");
+  debugSerial.println(config.baudRate);
+  debugSerial.print("Serial Config: ");
+  debugSerial.println(config.serialConfig == 0 ? "8N1" : "8E2");
   
 #if defined(ESP32)
   // Configure ESP32 hardware serial
@@ -255,14 +257,14 @@ void applyConfig() {
   }
   // Swap pins if using alternate UART pins
   if (config.rxPin == 13 && config.txPin == 15) {
-    Serial.swap();
+    vbusSerial.swap();
   }
 #endif
   
   // Initialize decoder with selected protocol
   vbus.begin((ProtocolType)config.protocol);
   
-  Serial.println("Configuration applied");
+  debugSerial.println("Configuration applied");
 }
 
 // ============================================================================

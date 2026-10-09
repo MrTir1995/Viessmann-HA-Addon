@@ -201,6 +201,8 @@ class VBUSDecoder {
     uint32_t _operatingHours[8];
     uint16_t _heatQuantity;
     uint8_t _systemVariant;
+    uint32_t _lastByteMillis;
+    static const uint32_t RECEIVE_TIMEOUT_MS = 500;
 
     // Bus participant discovery
     static const uint8_t MAX_PARTICIPANTS = 16;
@@ -228,6 +230,7 @@ class VBUSDecoder {
     void _septetInject(uint8_t *Buffer, uint8_t Offset, uint8_t Length);
     float _calcTemp(uint8_t Byte1, uint8_t Byte2);
     void _headerDecoder();
+    void _resetReceiveState();
 
     // VBUS protocol handlers
     void _vbusSyncHandler();

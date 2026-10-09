@@ -175,6 +175,43 @@ Kommunikationsdiagnosen sind keine Heizungsstörungen. Zur weiteren Zuordnung
 werden zeitgleiche Rohdatensätze und die an der Regelung angezeigten Temperaturen
 bzw. tatsächlichen Störungscodes benötigt.
 
+### Mitgeliefertes mögliches Störungstelegramm
+
+Der Mitschnitt `11 00 BF 0B 01 01 19 55 2D 33 8F` ist ein gültiges,
+ungefragtes Master-Datensatzupdate für Slot 1: Gesamtlänge 11 Bytes, CRC-16/Kermit
+`0x8F33` (auf dem Bus `33 8F`). Der aktuelle Parser behandelt `0x19` als
+Datensatz-ID und `55 2D` als codierte Nutzdaten; nach XOR mit `0xAA` werden
+`FF 87` gespeichert. Wiederholte Updates werden auch ohne vorherige Anfrage
+empfangen und unter `/api/remote` sowie in der Rohdatensatzanzeige sichtbar.
+
+Ein gleichzeitig beobachteter Brennerausfall macht diesen Datensatz zu einem
+Störungskandidaten, belegt aber weder ein konkretes Störbit noch einen Fehlercode.
+Insbesondere ist Bit 0 von `0x19` hier kein bestätigtes Störflag, und eine
+Zuordnung zu F4/F5 oder einem Display-Symbol lässt sich daraus nicht ableiten.
+`0xBF` wird deshalb nicht pauschal als Alarm interpretiert; derselbe Befehl
+transportiert auch andere Datensätze.
+
+Für eine verlässliche Sammelstörung und Fehlercodeanzeige werden zeitgleiche
+Mitschnitte bei **Störung aktiv**, mit dem **tatsächlich angezeigten Fehlercode**,
+und nach **Störung aufgehoben** benötigt, möglichst auch für weitere Fehlercodes.
+Bis diese Zuordnung bestätigt ist, bleibt `controller_fault` unbekannt (`null`)
+statt einen echten Alarm oder eine falsche Entwarnung zu erfinden. Das gilt
+gleichermaßen für Add-on und Standalone-Container.
+
+Brenneranforderung, bestätigter Flammenbetrieb und Brennerstörung sind getrennte
+Zustände: Eine Anforderung kann während einer Verriegelung weiterhin bestehen.
+Ein beobachtetes Flammensymbol beweist daher allein weder eine brennende Flamme
+noch eine laufende Heizkreispumpe. Auch die Deutung dieses Datensatzes als
+gebündeltes Display-/LED-Register ist derzeit eine Hypothese.
+
+Zur Bitzuordnung werden zusätzliche Vergleichszustände benötigt: Anforderung
+ohne Störung, Anforderung mit Störung, keine Anforderung sowie getrennt
+beobachteter Pumpenbetrieb. Dabei müssen Regelungsanzeigen und Betriebszustände
+zeitgleich dokumentiert sein; keine Störung absichtlich herbeiführen.
+Bitvergleiche betreffen beim aktuellen Decoder die Nutzdaten `FF 87`, nicht die
+Datensatz-ID `19`. Es werden bis zur Verifikation weder Brenner-/Pumpenbits noch
+Stör-LED- oder LCD-Segmentzuordnungen festgelegt.
+
 Container restart is available from the dashboard and settings page, subject
 to an external restart manager: Docker restart policy or enabled Home Assistant
 Watchdog. Without it the container stays stopped. Restart reloads saved startup

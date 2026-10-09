@@ -50,6 +50,7 @@ void VBUSDataLogger::loop() {
 }
 
 void VBUSDataLogger::logNow() {
+  if (_bufferSize == 0) return;
   if (!_decoder->isReady()) return;
   
   DataPoint point;
@@ -142,14 +143,12 @@ DataStats VBUSDataLogger::getStatistics(uint32_t startTime, uint32_t endTime) {
     stats.tempMax[i] = -999.0;
   }
   
-  uint16_t validCount = 0;
+  uint16_t tempCount[8] = {0};
   float tempSum[8] = {0};
   
   for (uint16_t i = 0; i < _count; i++) {
     DataPoint* point = getDataPoint(i);
     if (point->timestamp >= startTime && point->timestamp <= endTime) {
-      validCount++;
-      
       // Temperature statistics
       for (uint8_t t = 0; t < 8; t++) {
         if (point->temperatures[t] > -99.0 && point->temperatures[t] < 999.0) {
@@ -160,6 +159,7 @@ DataStats VBUSDataLogger::getStatistics(uint32_t startTime, uint32_t endTime) {
             stats.tempMax[t] = point->temperatures[t];
           }
           tempSum[t] += point->temperatures[t];
+          tempCount[t]++;
         }
       }
       
@@ -179,10 +179,8 @@ DataStats VBUSDataLogger::getStatistics(uint32_t startTime, uint32_t endTime) {
   }
   
   // Calculate averages
-  if (validCount > 0) {
-    for (uint8_t t = 0; t < 8; t++) {
-      stats.tempAvg[t] = tempSum[t] / validCount;
-    }
+  for (uint8_t t = 0; t < 8; t++) {
+    if (tempCount[t] > 0) stats.tempAvg[t] = tempSum[t] / tempCount[t];
   }
   
   return stats;
@@ -190,7 +188,8 @@ DataStats VBUSDataLogger::getStatistics(uint32_t startTime, uint32_t endTime) {
 
 DataStats VBUSDataLogger::getStatisticsLastHours(uint8_t hours) {
   uint32_t now = millis() / 1000;
-  uint32_t startTime = now - (hours * 3600);
+  uint32_t duration = uint32_t(hours) * 3600;
+  uint32_t startTime = now > duration ? now - duration : 0;
   return getStatistics(startTime, now);
 }
 
@@ -268,6 +267,7 @@ String VBUSDataLogger::exportJSON(uint32_t startTime, uint32_t endTime) {
 // Private helper methods
 
 void VBUSDataLogger::_addDataPoint(const DataPoint& point) {
+  if (_bufferSize == 0) return;
   _buffer[_writeIndex] = point;
   _writeIndex = (_writeIndex + 1) % _bufferSize;
   if (_count < _bufferSize) {

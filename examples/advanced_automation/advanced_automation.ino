@@ -18,12 +18,14 @@
 
 #if defined(ESP32)
   #include <WiFi.h>
+  #define debugSerial Serial
   #include <time.h>
   HardwareSerial vbusSerial(2);
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
   #include <time.h>
-  #define vbusSerial Serial
+  HardwareSerial& vbusSerial = Serial;
+  #define debugSerial Serial1  // TX-only diagnostics on GPIO2, separate from the bus UART.
 #else
   #error "This example requires ESP32 or ESP8266"
 #endif
@@ -69,61 +71,61 @@ VBUSScheduler scheduler(&vbus, 16);
 // ============================================================================
 
 void setup() {
-  Serial.begin(115200);
+  debugSerial.begin(115200);
   delay(1000);
-  Serial.println("\n\nViessmann Multi-Protocol Library - Advanced Automation Example");
-  Serial.println("===============================================================");
+  debugSerial.println("\n\nViessmann Multi-Protocol Library - Advanced Automation Example");
+  debugSerial.println("===============================================================");
   
   // Connect to WiFi for NTP
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
+  debugSerial.print("Connecting to WiFi: ");
+  debugSerial.println(WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   int retries = 0;
   while (WiFi.status() != WL_CONNECTED && retries < 20) {
     delay(500);
-    Serial.print(".");
+    debugSerial.print(".");
     retries++;
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    debugSerial.println("\nWiFi connected!");
+    debugSerial.print("IP address: ");
+    debugSerial.println(WiFi.localIP());
     
     // Configure NTP
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
-    Serial.println("NTP time sync configured");
+    debugSerial.println("NTP time sync configured");
   } else {
-    Serial.println("\nWiFi connection failed. Continuing without time sync.");
+    debugSerial.println("\nWiFi connection failed. Continuing without time sync.");
   }
   
   // Initialize decoder
-  Serial.println("\nInitializing KM-Bus decoder...");
+  debugSerial.println("\nInitializing KM-Bus decoder...");
   vbusSerial.begin(BAUD_RATE);
   vbus.begin(PROTOCOL);
   
   // Initialize data logger
-  Serial.println("Initializing data logger...");
+  debugSerial.println("Initializing data logger...");
   logger.begin();
   logger.setLogInterval(LOG_INTERVAL);
-  Serial.print("Buffer size: ");
-  Serial.print(LOG_BUFFER_SIZE);
-  Serial.print(" data points (");
-  Serial.print((LOG_BUFFER_SIZE * LOG_INTERVAL) / 3600);
-  Serial.println(" hours)");
+  debugSerial.print("Buffer size: ");
+  debugSerial.print(LOG_BUFFER_SIZE);
+  debugSerial.print(" data points (");
+  debugSerial.print((LOG_BUFFER_SIZE * LOG_INTERVAL) / 3600);
+  debugSerial.println(" hours)");
   
   // Initialize scheduler
-  Serial.println("Initializing scheduler...");
+  debugSerial.println("Initializing scheduler...");
   scheduler.begin();
   
   // Configure heating schedule
   setupSchedule();
   
-  Serial.println("\n===============================================================");
-  Serial.println("Setup complete. Starting automation...");
-  Serial.println("===============================================================\n");
+  debugSerial.println("\n===============================================================");
+  debugSerial.println("Setup complete. Starting automation...");
+  debugSerial.println("===============================================================\n");
   
   printHelp();
 }
@@ -150,9 +152,11 @@ void loop() {
   }
   
   // Handle serial commands
-  if (Serial.available()) {
-    handleCommand(Serial.read());
+#if defined(ESP32)
+  if (debugSerial.available()) {
+    handleCommand(debugSerial.read());
   }
+#endif
 }
 
 // ============================================================================
@@ -160,42 +164,52 @@ void loop() {
 // ============================================================================
 
 void setupSchedule() {
-  Serial.println("\nConfiguring heating schedule:");
+  debugSerial.println("\nConfiguring heating schedule:");
   
   // Weekday morning: Set day mode at 6:00 AM
   uint8_t weekdays = 0x3E;  // Monday to Friday (bits 1-5)
   scheduler.addTimeRule(6, 0, weekdays, ACTION_SET_MODE, KMBUS_MODE_DAY);
-  Serial.println("  ✓ Weekdays 6:00 AM - Day mode");
+  debugSerial.println("  ✓ Weekdays 6:00 AM - Day mode");
   
   // Weekday evening: Set night mode at 10:00 PM
   scheduler.addTimeRule(22, 0, weekdays, ACTION_SET_MODE, KMBUS_MODE_NIGHT);
-  Serial.println("  ✓ Weekdays 10:00 PM - Night mode");
+  debugSerial.println("  ✓ Weekdays 10:00 PM - Night mode");
   
   // Weekend morning: Set day mode at 8:00 AM
   uint8_t weekend = 0x41;  // Saturday and Sunday (bits 0 and 6)
   scheduler.addTimeRule(8, 0, weekend, ACTION_SET_MODE, KMBUS_MODE_DAY);
-  Serial.println("  ✓ Weekend 8:00 AM - Day mode");
+  debugSerial.println("  ✓ Weekend 8:00 AM - Day mode");
   
   // Weekend evening: Set night mode at 11:00 PM
   scheduler.addTimeRule(23, 0, weekend, ACTION_SET_MODE, KMBUS_MODE_NIGHT);
-  Serial.println("  ✓ Weekend 11:00 PM - Night mode");
+  debugSerial.println("  ✓ Weekend 11:00 PM - Night mode");
   
   // Temperature-based rule: Enable eco mode if outdoor temp > 15°C
   // Assuming outdoor temp is on sensor index 2
   scheduler.addTemperatureRule(2, 15.0, true, ACTION_ENABLE_ECO);
-  Serial.println("  ✓ Auto eco mode when outdoor > 15°C");
+  debugSerial.println("  ✓ Auto eco mode when outdoor > 15°C");
   
   // Temperature-based rule: Disable eco mode if outdoor temp < 10°C
   scheduler.addTemperatureRule(2, 10.0, false, ACTION_DISABLE_ECO);
-  Serial.println("  ✓ Disable eco mode when outdoor < 10°C");
+  debugSerial.println("  ✓ Disable eco mode when outdoor < 10°C");
   
-  Serial.print("\nTotal rules configured: ");
-  Serial.println(scheduler.getRuleCount());
+  debugSerial.print("\nTotal rules configured: ");
+  debugSerial.println(scheduler.getRuleCount());
 }
 
 // ============================================================================
 // Time Management
 // ============================================================================
+
+bool readLocalTime(struct tm* timeinfo) {
+#if defined(ESP8266)
+  time_t now = time(nullptr);
+  // Match getLocalTime's synchronized-clock check (year later than 2016).
+  return localtime_r(&now, timeinfo) != nullptr && timeinfo->tm_year > 116;
+#else
+  return getLocalTime(timeinfo);
+#endif
+}
 
 void updateSchedulerTime() {
   static uint32_t lastUpdate = 0;
@@ -204,7 +218,7 @@ void updateSchedulerTime() {
   // Update every 10 seconds
   if (now - lastUpdate >= 10000) {
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo)) {
+    if (readLocalTime(&timeinfo)) {
       scheduler.setCurrentTime(timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_wday);
     }
     lastUpdate = now;
@@ -245,22 +259,22 @@ void handleCommand(char cmd) {
     case 'c':
     case 'C':
       logger.clear();
-      Serial.println("✓ Data log cleared");
+      debugSerial.println("✓ Data log cleared");
       break;
     
     case 'p':
     case 'P':
       if (logger.isPaused()) {
         logger.resume();
-        Serial.println("✓ Data logging resumed");
+        debugSerial.println("✓ Data logging resumed");
       } else {
         logger.pause();
-        Serial.println("✓ Data logging paused");
+        debugSerial.println("✓ Data logging paused");
       }
       break;
     
     default:
-      Serial.println("Unknown command. Press 'h' for help.");
+      debugSerial.println("Unknown command. Press 'h' for help.");
   }
 }
 
@@ -269,145 +283,149 @@ void handleCommand(char cmd) {
 // ============================================================================
 
 void printHelp() {
-  Serial.println("\n=== Commands ===");
-  Serial.println("  s - Show status");
-  Serial.println("  h - Show this help");
-  Serial.println("  l - Show log statistics");
-  Serial.println("  e - Export data (last 1 hour)");
-  Serial.println("  r - Show schedule rules");
-  Serial.println("  c - Clear data log");
-  Serial.println("  p - Pause/resume logging");
-  Serial.println("================\n");
+#if defined(ESP32)
+  debugSerial.println("\n=== Commands ===");
+  debugSerial.println("  s - Show status");
+  debugSerial.println("  h - Show this help");
+  debugSerial.println("  l - Show log statistics");
+  debugSerial.println("  e - Export data (last 1 hour)");
+  debugSerial.println("  r - Show schedule rules");
+  debugSerial.println("  c - Clear data log");
+  debugSerial.println("  p - Pause/resume logging");
+  debugSerial.println("================\n");
+#else
+  debugSerial.println("ESP8266 diagnostics are TX-only on GPIO2; console input is disabled.");
+#endif
 }
 
 void printStatus() {
-  Serial.println("\n=== System Status ===");
+  debugSerial.println("\n=== System Status ===");
   
   // Time
   struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    Serial.print("Time: ");
-    Serial.printf("%02d:%02d:%02d ", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  if (readLocalTime(&timeinfo)) {
+    debugSerial.print("Time: ");
+    debugSerial.printf("%02d:%02d:%02d ", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    Serial.println(days[timeinfo.tm_wday]);
+    debugSerial.println(days[timeinfo.tm_wday]);
   }
   
   // Decoder
-  Serial.print("Decoder: ");
-  Serial.println(vbus.isReady() ? "Ready" : "Waiting...");
+  debugSerial.print("Decoder: ");
+  debugSerial.println(vbus.isReady() ? "Ready" : "Waiting...");
   
   if (vbus.isReady()) {
     // Current temperatures
-    Serial.print("Boiler: ");
-    Serial.print(vbus.getKMBusBoilerTemp(), 1);
-    Serial.println("°C");
+    debugSerial.print("Boiler: ");
+    debugSerial.print(vbus.getKMBusBoilerTemp(), 1);
+    debugSerial.println("°C");
     
-    Serial.print("Outdoor: ");
-    Serial.print(vbus.getKMBusOutdoorTemp(), 1);
-    Serial.println("°C");
+    debugSerial.print("Outdoor: ");
+    debugSerial.print(vbus.getKMBusOutdoorTemp(), 1);
+    debugSerial.println("°C");
     
-    Serial.print("Setpoint: ");
-    Serial.print(vbus.getKMBusSetpointTemp(), 1);
-    Serial.println("°C");
+    debugSerial.print("Setpoint: ");
+    debugSerial.print(vbus.getKMBusSetpointTemp(), 1);
+    debugSerial.println("°C");
     
     // Operating mode
-    Serial.print("Mode: ");
+    debugSerial.print("Mode: ");
     uint8_t mode = vbus.getKMBusMode();
     switch (mode) {
-      case KMBUS_MODE_DAY: Serial.println("Day"); break;
-      case KMBUS_MODE_NIGHT: Serial.println("Night"); break;
-      case KMBUS_MODE_ECO: Serial.println("Eco"); break;
-      default: Serial.println("Unknown");
+      case KMBUS_MODE_DAY: debugSerial.println("Day"); break;
+      case KMBUS_MODE_NIGHT: debugSerial.println("Night"); break;
+      case KMBUS_MODE_ECO: debugSerial.println("Eco"); break;
+      default: debugSerial.println("Unknown");
     }
   }
   
   // Data logger
-  Serial.print("\nData Points: ");
-  Serial.print(logger.getDataPointCount());
-  Serial.print(" / ");
-  Serial.println(LOG_BUFFER_SIZE);
-  Serial.print("Logging: ");
-  Serial.println(logger.isPaused() ? "Paused" : "Active");
+  debugSerial.print("\nData Points: ");
+  debugSerial.print(logger.getDataPointCount());
+  debugSerial.print(" / ");
+  debugSerial.println(LOG_BUFFER_SIZE);
+  debugSerial.print("Logging: ");
+  debugSerial.println(logger.isPaused() ? "Paused" : "Active");
   
   // Scheduler
-  Serial.print("\nActive Rules: ");
-  Serial.print(scheduler.getActiveRuleCount());
-  Serial.print(" / ");
-  Serial.println(scheduler.getRuleCount());
+  debugSerial.print("\nActive Rules: ");
+  debugSerial.print(scheduler.getActiveRuleCount());
+  debugSerial.print(" / ");
+  debugSerial.println(scheduler.getRuleCount());
   
-  Serial.println("====================\n");
+  debugSerial.println("====================\n");
 }
 
 void printLogStatistics() {
-  Serial.println("\n=== Log Statistics (Last 24h) ===");
+  debugSerial.println("\n=== Log Statistics (Last 24h) ===");
   
   DataStats stats = logger.getStatisticsLastHours(24);
   
-  Serial.println("Temperatures:");
+  debugSerial.println("Temperatures:");
   for (uint8_t i = 0; i < 3; i++) {
-    Serial.print("  Sensor ");
-    Serial.print(i);
-    Serial.print(": Min=");
-    Serial.print(stats.tempMin[i], 1);
-    Serial.print("°C, Max=");
-    Serial.print(stats.tempMax[i], 1);
-    Serial.print("°C, Avg=");
-    Serial.print(stats.tempAvg[i], 1);
-    Serial.println("°C");
+    debugSerial.print("  Sensor ");
+    debugSerial.print(i);
+    debugSerial.print(": Min=");
+    debugSerial.print(stats.tempMin[i], 1);
+    debugSerial.print("°C, Max=");
+    debugSerial.print(stats.tempMax[i], 1);
+    debugSerial.print("°C, Avg=");
+    debugSerial.print(stats.tempAvg[i], 1);
+    debugSerial.println("°C");
   }
   
-  Serial.println("\nRuntime:");
+  debugSerial.println("\nRuntime:");
   for (uint8_t i = 0; i < 2; i++) {
-    Serial.print("  Pump ");
-    Serial.print(i);
-    Serial.print(": ");
-    Serial.print(stats.pumpRuntime[i] / 3600);
-    Serial.println(" hours");
+    debugSerial.print("  Pump ");
+    debugSerial.print(i);
+    debugSerial.print(": ");
+    debugSerial.print(stats.pumpRuntime[i] / 3600);
+    debugSerial.println(" hours");
   }
   
-  Serial.print("\nTotal Heat: ");
-  Serial.print(stats.totalHeat);
-  Serial.println(" Wh");
+  debugSerial.print("\nTotal Heat: ");
+  debugSerial.print(stats.totalHeat);
+  debugSerial.println(" Wh");
   
-  Serial.println("=================================\n");
+  debugSerial.println("=================================\n");
 }
 
 void printScheduleRules() {
-  Serial.println("\n=== Schedule Rules ===");
+  debugSerial.println("\n=== Schedule Rules ===");
   
   for (uint8_t i = 0; i < scheduler.getRuleCount(); i++) {
     ScheduleRule* rule = scheduler.getRule(i + 1);
     if (rule) {
-      Serial.print("Rule ");
-      Serial.print(rule->id);
-      Serial.print(": ");
+      debugSerial.print("Rule ");
+      debugSerial.print(rule->id);
+      debugSerial.print(": ");
       
       if (rule->type == RULE_TIME_BASED) {
-        Serial.printf("Time %02d:%02d - ", rule->timeSchedule.hour, rule->timeSchedule.minute);
+        debugSerial.printf("Time %02d:%02d - ", rule->timeSchedule.hour, rule->timeSchedule.minute);
       } else if (rule->type == RULE_TEMPERATURE_BASED) {
-        Serial.print("Temp sensor ");
-        Serial.print(rule->tempCondition.sensorIndex);
-        Serial.print(rule->tempCondition.aboveThreshold ? " > " : " < ");
-        Serial.print(rule->tempCondition.threshold, 1);
-        Serial.print("°C - ");
+        debugSerial.print("Temp sensor ");
+        debugSerial.print(rule->tempCondition.sensorIndex);
+        debugSerial.print(rule->tempCondition.aboveThreshold ? " > " : " < ");
+        debugSerial.print(rule->tempCondition.threshold, 1);
+        debugSerial.print("°C - ");
       }
       
-      Serial.print(rule->enabled ? "Enabled" : "Disabled");
-      Serial.println();
+      debugSerial.print(rule->enabled ? "Enabled" : "Disabled");
+      debugSerial.println();
     }
   }
   
-  Serial.println("======================\n");
+  debugSerial.println("======================\n");
 }
 
 void exportData() {
-  Serial.println("\n=== Exporting Data (Last 1 hour) ===");
+  debugSerial.println("\n=== Exporting Data (Last 1 hour) ===");
   
   uint32_t now = millis() / 1000;
-  uint32_t startTime = now - 3600;  // 1 hour ago
+  uint32_t startTime = now >= 3600 ? now - 3600 : 0;  // 1 hour ago
   
   String csv = logger.exportCSV(startTime, now);
   
-  Serial.println(csv);
-  Serial.println("====================================\n");
+  debugSerial.println(csv);
+  debugSerial.println("====================================\n");
 }

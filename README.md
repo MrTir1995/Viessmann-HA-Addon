@@ -2,7 +2,7 @@
 
 [![Add repository to Home Assistant](https://img.shields.io/badge/Add%20repository%20to-Home%20Assistant-blue?logo=home-assistant&logoColor=white)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https://github.com/MrTir1995/Viessmann-HA-Addon)
 [![GitHub Release](https://img.shields.io/github/v/release/MrTir1995/Viessmann-HA-Addon?logo=github)](https://github.com/MrTir1995/Viessmann-HA-Addon/releases)
-![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.3.1-blue.svg)
 ![Supports amd64 Architecture](https://img.shields.io/badge/amd64-yes-green.svg)
 ![Supports aarch64 Architecture](https://img.shields.io/badge/aarch64-yes-green.svg)
 ![Supports armhf Architecture](https://img.shields.io/badge/armhf-yes-green.svg)
@@ -76,6 +76,7 @@ Die folgenden Gerätefamilien dienen als Orientierung, nicht als Garantie für j
 ### KM-Bus Protokoll Geräte
 
 - `km`: vorhandener Decoder-/Polling-Modus für KM-Bus
+- **Grenze des Legacy-Modus `km`:** Sein Sendeformat ist nicht mit den verifizierten `km_remote`-Telegrammen vereinheitlicht. Polling und Schreibbefehle sind daher nicht als funktionsfähig bestätigt; eine Korrektur benötigt passende reale Busmitschnitte. Der Modus `km_remote` ist eine separate Implementierung.
 - `km_remote`: experimenteller Slave-Modus mit Vitotrol-200/300-Profilen und Heizkreis-Slot 1–3
 
 **Vitotronic 200 KM1:** Die vollständige Kompatibilität der Emulation ist nicht bestätigt. Linux kann erforderliche Antwortzeiten verfehlen. Prüfen Sie Busmitschnitte und die Reaktion der Regelung vor dem regulären Einsatz. Weitere Grenzen und Protokollreferenzen: [KM-Bus/Vitotrol](doc/KM_BUS_VITOTROL.md).
@@ -406,7 +407,7 @@ automation:
         message: "Warnung: Kesseltemperatur ist unter 30°C"
 ```
 
-## 📦 Update auf Version 2.3.0
+## 📦 Update auf Version 2.3.1
 
 1. Sichern Sie Ihre Add-on-Konfiguration.
 2. Nach Übernahme der Release-Änderungen in den Standardbranch und erfolgreicher Docker-Veröffentlichung: Öffnen Sie den **Add-on Store** und wählen Sie im Menü **Nach Updates suchen**.
@@ -415,9 +416,13 @@ automation:
 
 Bestehende Protokollmodi bleiben verfügbar. `km_remote` muss ausdrücklich ausgewählt und mit einem geeigneten Adapter getestet werden.
 
-Home Assistant bezieht die Images aus `docker.io/mrtir071/viessmann-decoder-{arch}:2.3.0`. Ein GitHub-Release allein reicht nicht: Die Version in `config.yaml` im Standardbranch und die Docker-Tags müssen übereinstimmen.
+Home Assistant bezieht die Images aus `docker.io/mrtir071/viessmann-decoder-{arch}:2.3.1`. Ein GitHub-Release allein reicht nicht: Die Version in `config.yaml` im Standardbranch und die Docker-Tags müssen übereinstimmen.
 
-Für Maintainer: Der Workflow **Publish to Docker Hub** baut alle fünf Architekturen und die Multi-Arch-Manifeste. Mit `version=2.3.0` und `create_release=true` veröffentlicht er nach erfolgreichem Build zusätzlich die Release-Notizen aus dem Add-on-Changelog. Für einen regulär verfügbaren Store-Release sollte der Workflow vom aktualisierten Standardbranch gestartet werden.
+Das veröffentlichte Image 2.3.0 enthält noch nicht die später ergänzte Adapterverwaltung und den Hell-/Dunkel-Schalter. Ab 2.3.1 führt **Add Serial Adapter** zur Adapterverwaltung mit **+**; der Theme-Schalter befindet sich oben rechts. Beide Funktionen stehen im Add-on und im Standalone-Container zur Verfügung. Weitere serielle Geräte müssen dem Container zugänglich gemacht werden (bei Compose über `devices`).
+
+Standalone mit Registry-Image: Neues Image herunterladen und den Container neu erstellen; ein einfacher Neustart lädt kein neues Image. Bei Verwendung der mitgelieferten `compose.yaml` aus dem aktualisierten Quellcode mit `docker compose up -d --build` neu bauen. Falls nach dem Update noch **Add Device** statt **Add Serial Adapter** angezeigt wird, die Seite einmal mit **Strg+F5** neu laden und prüfen, ob tatsächlich das neue Image läuft.
+
+Für Maintainer: Der Workflow **Publish to Docker Hub** baut alle fünf Architekturen und die Multi-Arch-Manifeste. Mit `version=2.3.1` und `create_release=true` veröffentlicht er nach erfolgreichem Build zusätzlich die Release-Notizen aus dem Add-on-Changelog. Für einen regulär verfügbaren Store-Release sollte der Workflow vom aktualisierten Standardbranch gestartet werden.
 
 ## 📚 Weitere Dokumentation
 

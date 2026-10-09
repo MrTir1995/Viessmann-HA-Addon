@@ -156,6 +156,37 @@ docker run -it --rm \
 
 ### KM-Bus regression tests
 
+The canonical multi-protocol decoder is `src/vbusdecoder.cpp` and its header.
+The Linux compatibility decoder files forward to these sources; do not maintain
+a second parser implementation. The Docker build copies the canonical header
+into its flattened include directory.
+
+Decoder regression tests cover truncated frames, device payload lengths,
+discovery initialization, bounds checks and 32-bit clock rollover:
+
+```bash
+cd /pfad/zum/Viessmann-HA-Addon/viessmann-decoder
+g++ -std=c++17 -Wall -Wextra -Ilinux/include -Isrc \
+  linux/tests/VBUSDecoder_test.cpp src/vbusdecoder.cpp -o /tmp/vbus-tests
+/tmp/vbus-tests
+```
+
+Logger, scheduler and MQTT discovery regressions use narrowly scoped Arduino
+and PubSubClient test doubles, not a board or live broker:
+
+```bash
+g++ -std=c++17 -Wall -Wextra -DESP32 \
+  -Ilinux/tests/helper_stubs -Ilinux/include -Isrc \
+  linux/tests/VBUSHelpers_test.cpp src/vbusdecoder.cpp \
+  src/VBUSDataLogger.cpp src/VBUSScheduler.cpp src/VBUSMqttClient.cpp \
+  -o /tmp/vbus-helper-tests
+/tmp/vbus-helper-tests
+```
+
+Repeat with `-DESP8266` for the alternative compile path. Actual Arduino
+sketches and electrical response timing still require their board toolchains
+and target hardware.
+
 The dependency-free C++ tests use a fake serial stream and clock to exercise
 telegram validation, CRC, profiles, queues, timeouts and partial writes.
 Compile with the same C++17 compiler used by the add-on:

@@ -1,5 +1,5 @@
 name: Viessmann Decoder
-version: 2.3.0
+version: 2.3.1
 slug: viessmann-decoder
 description: Monitor and configure Viessmann heating systems via VBUS, KW-Bus, P300, KM-Bus, and Vitotrol emulation
 arch:
@@ -51,7 +51,7 @@ options:
   usbip_port: 3240
 schema:
   serial_port: str
-  baud_rate: list(1200|2400|4800|9600|19200|38400|115200)
+  baud_rate: list(1200|2400|4800|9600|19200|38400|57600|115200)
   protocol: list(vbus|kw|p300|km|km_remote)
   serial_config: list(8N1|8E1|8E2)
   remote_model: list(vitotrol200|vitotrol300)

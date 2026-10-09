@@ -255,7 +255,9 @@ void optionalDeviceFramesDoNotReuseOldData() {
                 if (mx) CHECK(decoder.getErrorMask() == (frames >= 6 ? 100 : 0));
             }
             CHECK(decoder.getRelayNum() == decoder.getPumpNum());
-            for (uint8_t i = decoder.getPumpNum(); i < (device.source == 0x1060 ? 7 : 2); ++i) {
+            const uint8_t pumpCapacity = device.source == 0x1060 ? 7 :
+                                         (device.source == 0x7E31 ? 4 : 2);
+            for (uint8_t i = decoder.getPumpNum(); i < pumpCapacity; ++i) {
                 CHECK(decoder.getPump(i) == 0);
                 CHECK(!decoder.getRelay(i));
             }

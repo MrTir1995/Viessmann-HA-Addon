@@ -25,6 +25,10 @@
 #include <string>
 #include <unordered_set>
 #include <cmath>
+#include <chrono>
+#include <deque>
+#include <mutex>
+#include <ctime>
 #include "KMBusVitotrol.h"
 #include "LinuxSerial.h"
 #include "vbusdecoder.h"
@@ -58,6 +62,70 @@ KMBusVitotrol* vitotrol = nullptr;
 Config config;
 pthread_mutex_t data_mutex = PTHREAD_MUTEX_INITIALIZER;
 std::string activeSerialPort;
+
+struct BusLogEntry {
+    std::chrono::system_clock::time_point timestamp;
+    bool transmitted;
+    std::vector<uint8_t> bytes;
+};
+
+constexpr size_t MAX_BUS_LOG_ENTRIES = 500;
+constexpr size_t MAX_BUS_LOG_BYTES = 32;
+std::deque<BusLogEntry> busLogs;
+std::mutex busLogMutex;
+std::mutex restartMutex;
+bool restartPending = false;
+std::chrono::steady_clock::time_point restartDeadline;
+constexpr int RESTART_EXIT_CODE = 75;
+const std::string processInstanceId = std::to_string(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+
+bool containerRestartSupported() {
+    return (access("/.dockerenv", F_OK) == 0 ||
+            access("/run/.containerenv", F_OK) == 0 || getpid() == 1) &&
+           access("/run.sh", X_OK) == 0;
+}
+
+void recordBusTraffic(bool transmitted, const uint8_t* data, size_t size) {
+    const auto now = std::chrono::system_clock::now();
+    std::lock_guard<std::mutex> lock(busLogMutex);
+    for (size_t i = 0; i < size; ++i) {
+        // Group nearby bytes for readability, not as a protocol frame boundary.
+        if (busLogs.empty() || busLogs.back().transmitted != transmitted ||
+            busLogs.back().bytes.size() >= MAX_BUS_LOG_BYTES ||
+            now - busLogs.back().timestamp >= std::chrono::milliseconds(10)) {
+            if (busLogs.size() >= MAX_BUS_LOG_ENTRIES) busLogs.pop_front();
+            busLogs.push_back({now, transmitted, {}});
+        }
+        busLogs.back().bytes.push_back(data[i]);
+    }
+}
+
+std::string generateBusLogs() {
+    std::lock_guard<std::mutex> lock(busLogMutex);
+    std::string logs;
+    for (const auto& entry : busLogs) {
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+            entry.timestamp.time_since_epoch()).count();
+        const time_t seconds = milliseconds / 1000;
+        struct tm timestamp;
+        localtime_r(&seconds, &timestamp);
+        char date[32];
+        strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &timestamp);
+        char prefix[48];
+        snprintf(prefix, sizeof(prefix), "%s.%03d %s  ", date,
+                 static_cast<int>(milliseconds % 1000), entry.transmitted ? "TX" : "RX");
+        logs += prefix;
+        for (uint8_t byte : entry.bytes) {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%02X ", byte);
+            logs += hex;
+        }
+        logs += '\n';
+    }
+    return logs;
+}
 
 // Signal handler
 void signalHandler(int signum) {
@@ -332,6 +400,7 @@ char* generateDataJSON() {
 
 struct RemotePostData {
     std::string body;
+    bool tooLarge = false;
 };
 
 int parseJsonNumber(const std::string& body, const char* key, float& value) {
@@ -371,14 +440,148 @@ MHD_Result queueJson(MHD_Connection* connection, unsigned int status, const char
         strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
     if (!response) return MHD_NO;
     MHD_add_response_header(response, "Content-Type", "application/json");
+    MHD_add_response_header(response, "Cache-Control", "no-store");
     const MHD_Result result = MHD_queue_response(connection, status, response);
     MHD_destroy_response(response);
     return result;
 }
 
-struct SettingsPostData {
-    std::string body;
-};
+bool restartOriginAllowed(MHD_Connection* connection) {
+    const char* site = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Sec-Fetch-Site");
+    if (site && strcasecmp(site, "cross-site") == 0) return false;
+    const char* origin = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Origin");
+    if (!origin) return true;
+    // Ingress rewrites Host; the browser's forbidden same-origin header retains
+    // the original origin relationship. JSON-only POST still blocks HTML forms.
+    if (site && strcasecmp(site, "same-origin") == 0) return true;
+    const char* host = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Host");
+    if (!host) return false;
+    const std::string value(origin);
+    size_t start;
+    if (value.compare(0, 7, "http://") == 0) start = 7;
+    else if (value.compare(0, 8, "https://") == 0) start = 8;
+    else return false;
+    return strcasecmp(value.substr(start).c_str(), host) == 0;
+}
+
+bool parseRestartConfirmation(const std::string& body) {
+    size_t position = 0;
+    for (const char* token : {"{", "\"confirm\"", ":", "true", "}"}) {
+        while (position < body.size() &&
+               (body[position] == ' ' || body[position] == '\t' ||
+                body[position] == '\r' || body[position] == '\n')) ++position;
+        const size_t length = strlen(token);
+        if (body.compare(position, length, token) != 0) return false;
+        position += length;
+    }
+    while (position < body.size() &&
+           (body[position] == ' ' || body[position] == '\t' ||
+            body[position] == '\r' || body[position] == '\n')) ++position;
+    return position == body.size();
+}
+
+MHD_Result handleRestartApi(MHD_Connection* connection, const char* method,
+                            size_t* uploadSize, const char* uploadData, void** context) {
+    if (strcmp(method, "POST") != 0)
+        return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"Use POST\"}");
+    if (!restartOriginAllowed(connection))
+        return queueJson(connection, MHD_HTTP_FORBIDDEN, "{\"error\":\"Cross-origin restart refused\"}");
+    const char* contentType = MHD_lookup_connection_value(
+        connection, MHD_HEADER_KIND, "Content-Type");
+    std::string mediaType = contentType ? contentType : "";
+    mediaType = mediaType.substr(0, mediaType.find(';'));
+    while (!mediaType.empty() && (mediaType.back() == ' ' || mediaType.back() == '\t'))
+        mediaType.pop_back();
+    if (strcasecmp(mediaType.c_str(), "application/json") != 0)
+        return queueJson(connection, MHD_HTTP_UNSUPPORTED_MEDIA_TYPE,
+                         "{\"error\":\"Use application/json\"}");
+    auto* request = static_cast<RemotePostData*>(*context);
+    if (!request) {
+        *context = new RemotePostData();
+        return MHD_YES;
+    }
+    if (*uploadSize > 0) {
+        if (*uploadSize > 256 - request->body.size()) request->tooLarge = true;
+        if (!request->tooLarge) request->body.append(uploadData, *uploadSize);
+        *uploadSize = 0;
+        return MHD_YES;
+    }
+    const bool tooLarge = request->tooLarge;
+    const bool confirmed = !tooLarge && parseRestartConfirmation(request->body);
+    delete request;
+    *context = nullptr;
+    if (tooLarge)
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE, "{\"error\":\"Request body too large\"}");
+    if (!confirmed)
+        return queueJson(connection, MHD_HTTP_BAD_REQUEST, "{\"error\":\"Expected {\\\"confirm\\\":true}\"}");
+    if (!containerRestartSupported())
+        return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
+                         "{\"error\":\"Container restart unavailable on this host\"}");
+    std::lock_guard<std::mutex> lock(restartMutex);
+    if (restartPending)
+        return queueJson(connection, MHD_HTTP_CONFLICT, "{\"error\":\"Restart already pending\"}");
+    const MHD_Result result = queueJson(connection, MHD_HTTP_ACCEPTED,
+                                       "{\"status\":\"restarting\"}");
+    if (result == MHD_YES) {
+        restartDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        restartPending = true;
+    }
+    return result;
+}
+
+const char* getRestartHTML() {
+    return R"HTML(
+<button type="button" id="restartButton" class="nav-button btn btn-secondary" disabled>Container neu starten</button>
+<div id="restartMessage" role="status"></div>
+<script>
+const restartButton=document.getElementById('restartButton');
+const restartMessage=document.getElementById('restartMessage');
+async function restartFetch(path,options={}){
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),2000);
+ try{return await fetch(path,{...options,cache:'no-store',signal:controller.signal});}
+ finally{clearTimeout(timer);}
+}
+async function loadRestartCapability(){
+ try{const response=await restartFetch('api/system');if(!response.ok)throw new Error();
+ const system=await response.json();restartButton.disabled=!system.restart_supported||system.restart_pending;
+ restartMessage.textContent=system.restart_supported?
+ 'Neustart benötigt Docker-Neustartregel oder aktivierten Home-Assistant-Watchdog.':
+ 'Container-Neustart ist auf diesem Host nicht verfügbar.';}
+ catch(error){restartMessage.textContent='Neustart-Verfügbarkeit konnte nicht geprüft werden.';}
+}
+async function waitForContainer(previousInstance){
+ const deadline=Date.now()+90000;
+ while(Date.now()<deadline){
+  try{const response=await restartFetch('api/system');
+   if(response.ok){const system=await response.json();
+    if(typeof system.instance_id==='string'&&system.instance_id!==previousInstance){
+     window.location.href=new URL('./',window.location.href).href;return;}}}
+  catch(error){}
+  await new Promise(resolve=>setTimeout(resolve,250));
+ }
+ restartMessage.textContent='Neustart nicht bestätigt. Bitte Container und Neustartregel bzw. Watchdog prüfen und die Seite manuell neu laden.';
+}
+restartButton.addEventListener('click',async()=>{
+ if(!window.confirm('Container wirklich neu starten? Die Verbindung wird kurz unterbrochen. Docker-Neustartregel oder Home-Assistant-Watchdog muss aktiviert sein.'))return;
+ restartButton.disabled=true;
+ try{const before=await restartFetch('api/system');if(!before.ok)throw new Error('Statusprüfung fehlgeschlagen');
+ const previousInstance=(await before.json()).instance_id;
+ if(typeof previousInstance!=='string')throw new Error('Prozesskennung fehlt');
+ const response=await restartFetch('api/restart',{method:'POST',
+ headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});
+ const result=await response.json();if(response.status!==202)throw new Error(result.error||'Neustart abgelehnt');
+ restartMessage.textContent='Container wird neu gestartet. Warte auf eine neue Prozesskennung…';
+ await waitForContainer(previousInstance);}
+ catch(error){await loadRestartCapability();
+ restartMessage.textContent='Neustart nicht bestätigt: '+error.message+'. Bitte Container prüfen.';}
+});
+loadRestartCapability();
+</script>
+)HTML";
+}
+
+using SettingsPostData = RemotePostData;
 
 int parseJsonBool(const std::string& body, const char* key, bool& value) {
     const std::string field = std::string("\"") + key + "\"";
@@ -453,16 +656,21 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
         return MHD_YES;
     }
     if (*uploadDataSize > 0) {
-        if (request->body.size() + *uploadDataSize > 1024) {
-            delete request;
-            *connectionContext = nullptr;
-            *uploadDataSize = 0;
-            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
-                             "{\"error\":\"Request body too large\"}");
+        if (*uploadDataSize > 1024 - request->body.size()) {
+            request->tooLarge = true;
+            request->body.clear();
         }
-        request->body.append(uploadData, *uploadDataSize);
+        if (!request->tooLarge) {
+            request->body.append(uploadData, *uploadDataSize);
+        }
         *uploadDataSize = 0;
         return MHD_YES;
+    }
+    if (request->tooLarge) {
+        delete request;
+        *connectionContext = nullptr;
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                         "{\"error\":\"Request body too large\"}");
     }
 
     std::string protocol;
@@ -521,26 +729,172 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
                      "{\"status\":\"saved\",\"restart_required\":true}");
 }
 
+bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& update,
+                       std::string& mode, std::string& profile) {
+    size_t position = 0;
+    auto skipSpace = [&]() {
+        while (position < body.size() &&
+               (body[position] == ' ' || body[position] == '\t' ||
+                body[position] == '\r' || body[position] == '\n')) ++position;
+    };
+    auto quoted = [&](std::string& value) {
+        if (position >= body.size() || body[position++] != '"') return false;
+        const size_t start = position;
+        while (position < body.size() && body[position] != '"') {
+            if (static_cast<unsigned char>(body[position]) < 0x20 || body[position] == '\\')
+                return false;
+            ++position;
+        }
+        if (position >= body.size()) return false;
+        value = body.substr(start, position++ - start);
+        return true;
+    };
+    skipSpace();
+    if (position >= body.size() || body[position++] != '{') return false;
+    std::unordered_set<std::string> fields;
+    while (true) {
+        skipSpace();
+        std::string key;
+        if (!quoted(key) || !fields.insert(key).second) return false;
+        skipSpace();
+        if (position >= body.size() || body[position++] != ':') return false;
+        skipSpace();
+        if (key == "mode" || key == "profile") {
+            std::string& value = key == "mode" ? mode : profile;
+            if (!quoted(value)) return false;
+            if (key == "mode") {
+                if (value != "off" && value != "water" && value != "heat_water" &&
+                    value != "party_on" && value != "party_off" &&
+                    value != "economy_on" && value != "economy_off") return false;
+                update.hasMode = true;
+                update.mode = mode.c_str();
+            } else {
+                if (value != "wifi" && value != "openv") return false;
+                update.hasProfile = true;
+                update.profile = profile.c_str();
+            }
+        } else {
+            if (key != "room_temperature" && key != "desired_room_temperature" &&
+                key != "reduced_room_temperature" && key != "party_room_temperature") return false;
+            const size_t start = position;
+            if (position < body.size() && body[position] == '-') ++position;
+            if (position >= body.size() || body[position] < '0' || body[position] > '9')
+                return false;
+            if (body[position] == '0') ++position;
+            else while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                ++position;
+            if (position < body.size() && body[position] == '.') {
+                ++position;
+                const size_t fraction = position;
+                while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                    ++position;
+                if (fraction == position) return false;
+            }
+            if (position < body.size() && (body[position] == 'e' || body[position] == 'E')) {
+                ++position;
+                if (position < body.size() && (body[position] == '+' || body[position] == '-'))
+                    ++position;
+                const size_t exponent = position;
+                while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                    ++position;
+                if (exponent == position) return false;
+            }
+            const std::string token = body.substr(start, position - start);
+            char* end = nullptr;
+            const float value = strtof(token.c_str(), &end);
+            if (*end || !std::isfinite(value)) return false;
+            if (key == "room_temperature") {
+                if (value < -20.0f || value > 50.0f) return false;
+                update.hasRoomTemperature = true;
+                update.roomTemperature = value;
+            } else {
+                if (value < 5.0f || value > 35.0f || value != std::round(value)) return false;
+                if (key == "desired_room_temperature") {
+                    update.hasDesiredRoomTemperature = true;
+                    update.desiredRoomTemperature = value;
+                } else if (key == "reduced_room_temperature") {
+                    update.hasReducedRoomTemperature = true;
+                    update.reducedRoomTemperature = value;
+                } else {
+                    update.hasPartyRoomTemperature = true;
+                    update.partyRoomTemperature = value;
+                }
+            }
+        }
+        skipSpace();
+        if (position >= body.size()) return false;
+        const char separator = body[position++];
+        if (separator == '}') {
+            skipSpace();
+            return position == body.size() && (!update.hasPartyRoomTemperature ||
+                   (update.hasMode && mode == "party_on"));
+        }
+        if (separator != ',') return false;
+    }
+}
+
 MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
                            size_t* uploadDataSize, const char* uploadData,
                            void** connectionContext) {
     if (strcmp(method, "GET") == 0) {
-        char json[512];
+        char json[1024];
         pthread_mutex_lock(&data_mutex);
         const bool connected = serialConnected && vitotrol;
         snprintf(json, sizeof(json),
                  "{\"model\":\"Vitotrol %s\",\"slot\":%u,\"online\":%s,"
                  "\"room_temperature\":%.1f,\"desired_room_temperature\":%.1f,"
-                 "\"mode\":%u,\"last_master_dataset\":%u}",
+                 "\"reduced_room_temperature\":%.1f,"
+                 "\"mode\":%u,\"last_master_dataset\":%u,"
+                 "\"profile\":\"%s\",\"pending_commands\":%u,"
+                 "\"crc_errors\":%u,\"malformed_frames\":%u,\"unknown_commands\":%u",
                  config.remoteModelId == 0x38 ? "300" : "200",
                  config.remoteSlot,
                  connected && vitotrol->isOnline() ? "true" : "false",
                  connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
                  connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
+                 connected ? vitotrol->getReducedRoomTemperature() : 0.0,
                  connected ? vitotrol->getOperatingMode() : 0,
-                 connected ? vitotrol->getLastMasterDataset() : 0);
+                 connected ? vitotrol->getLastMasterDataset() : 0,
+                 connected ? vitotrol->getProtocolProfile() : "wifi",
+                 connected ? vitotrol->getPendingCommandCount() : 0,
+                 connected ? vitotrol->getCrcErrorCount() : 0,
+                 connected ? vitotrol->getMalformedFrameCount() : 0,
+                 connected ? vitotrol->getUnknownCommandCount() : 0);
+        std::string body(json);
+        float outsideTemperature = 0;
+        bool heatingEnabled = false;
+        const bool hasOutside = connected && vitotrol->getOutsideTemperature(outsideTemperature);
+        const bool hasHeating = connected && vitotrol->getHeatingEnabled(heatingEnabled);
+        body += ",\"outside_temperature\":";
+        body += hasOutside ? std::to_string(outsideTemperature) : "null";
+        body += ",\"heating_enabled\":";
+        body += hasHeating ? (heatingEnabled ? "true" : "false") : "null";
+        body += ",\"requested_party_mode\":";
+        body += connected && vitotrol->getPartyEnabled() ? "true" : "false";
+        body += ",\"party_room_temperature\":" +
+                std::to_string(connected ? vitotrol->getPartyRoomTemperature() : 0.0f);
+        body += ",\"requested_economy_mode\":";
+        body += connected && vitotrol->getEconomyEnabled() ? "true" : "false";
+        body += ",\"datasets\":[";
+        bool first = true;
+        for (uint16_t id = 0; connected && id < 254; ++id) {
+            const uint8_t* bytes = nullptr;
+            uint8_t length = 0;
+            uint32_t receivedAt = 0;
+            if (!vitotrol->getDataset(static_cast<uint8_t>(id), bytes, length, receivedAt)) continue;
+            if (!first) body += ',';
+            first = false;
+            body += "{\"id\":" + std::to_string(id) + ",\"age_ms\":" +
+                   std::to_string(static_cast<uint32_t>(millis()) - receivedAt) + ",\"data\":[";
+            for (uint8_t i = 0; i < length; ++i) {
+                if (i) body += ',';
+                body += std::to_string(bytes[i]);
+            }
+            body += "]}";
+        }
+        body += "]}";
         pthread_mutex_unlock(&data_mutex);
-        return queueJson(connection, MHD_HTTP_OK, json);
+        return queueJson(connection, MHD_HTTP_OK, body.c_str());
     }
 
     if (strcmp(method, "POST") != 0) {
@@ -555,37 +909,33 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
         return MHD_YES;
     }
     if (*uploadDataSize > 0) {
-        if (request->body.size() + *uploadDataSize > 1024) {
-            delete request;
-            *connectionContext = nullptr;
-            *uploadDataSize = 0;
-            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
-                             "{\"error\":\"Request body too large\"}");
+        if (*uploadDataSize > 1024 - request->body.size()) {
+            request->tooLarge = true;
+            request->body.clear();
         }
-        request->body.append(uploadData, *uploadDataSize);
+        if (!request->tooLarge) {
+            request->body.append(uploadData, *uploadDataSize);
+        }
         *uploadDataSize = 0;
         return MHD_YES;
     }
+    if (request->tooLarge) {
+        delete request;
+        *connectionContext = nullptr;
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                         "{\"error\":\"Request body too large\"}");
+    }
 
-    float currentTemperature = 0;
-    float desiredTemperature = 0;
+    KMBusVitotrol::ControlUpdate update;
     std::string mode;
-    const int currentField = parseJsonNumber(request->body, "room_temperature", currentTemperature);
-    const int desiredField = parseJsonNumber(request->body, "desired_room_temperature", desiredTemperature);
-    const int modeField = parseJsonString(request->body, "mode", mode);
-    const bool valid =
-        currentField >= 0 && desiredField >= 0 && modeField >= 0 &&
-        (currentField || desiredField || modeField) &&
-        (!currentField || (currentTemperature >= -20.0f && currentTemperature <= 50.0f)) &&
-        (!desiredField || (desiredTemperature >= 5.0f && desiredTemperature <= 35.0f));
+    std::string profile;
+    const bool valid = parseRemoteUpdate(request->body, update, mode, profile);
 
     bool applied = false;
     if (valid) {
         pthread_mutex_lock(&data_mutex);
         if (serialConnected && vitotrol) {
-            applied = (!currentField || vitotrol->setCurrentRoomTemperature(currentTemperature)) &&
-                      (!desiredField || vitotrol->setDesiredRoomTemperature(desiredTemperature)) &&
-                      (!modeField || vitotrol->setOperatingMode(mode.c_str()));
+            applied = vitotrol->applyControlUpdate(update);
         }
         pthread_mutex_unlock(&data_mutex);
     }
@@ -594,7 +944,7 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
     *connectionContext = nullptr;
     if (!valid) {
         return queueJson(connection, MHD_HTTP_BAD_REQUEST,
-                         "{\"error\":\"Invalid values or unsupported mode\"}");
+                         "{\"error\":\"Invalid JSON, field, value, mode or profile\"}");
     }
     if (!applied) {
         return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
@@ -665,6 +1015,7 @@ const char* getDashboardHTML() {
     "<script>"
     "function updateData(){"
     "fetch('data').then(r=>r.json()).then(d=>{"
+    "document.getElementById('remoteControls').style.display=d.protocol===4?'flex':'none';"
     "const statusDot=document.getElementById('statusDot');"
     "const statusText=document.getElementById('statusText');"
     "const protocolText=document.getElementById('protocol');"
@@ -751,6 +1102,12 @@ const char* getDashboardHTML() {
     "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M17,13H13V17H11V13H7V11H11V7H13V11H17M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z'/></svg>"
     "<span>Add Device</span>"
     "</a>"
+    "<a href='logs' class='nav-button'>"
+    "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M4 3h16v18H4V3m3 4v2h10V7H7m0 4v2h10v-2H7m0 4v2h7v-2H7Z'/></svg>"
+    "<span>Bus-Logs</span>"
+    "</a>"
+    "<a href='remote' id='remoteControls' class='nav-button' style='display:none'>"
+    "<span>Vitotrol-Steuerung</span></a>"
     "</div>"
     "<div class='card'>"
     "<div class='card-header'>"
@@ -1164,6 +1521,176 @@ const char* getDevicesHTML() {
     return html;
 }
 
+const char* getBusLogsHTML() {
+    return R"HTML(<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viessmann Decoder - Bus-Logs</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Roboto,Noto,sans-serif;background:#fafafa;color:#212121}
+header{background:#03a9f4;color:white;padding:16px 24px;box-shadow:0 2px 4px #0003}
+header nav{max-width:1152px;margin:auto;display:flex;align-items:center;gap:24px}
+header a{color:white;text-decoration:none}
+h1{font-size:20px;font-weight:400;margin:0}
+main{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:white;border-radius:8px;padding:20px;box-shadow:0 2px 5px #0003}
+.controls{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+button{background:#03a9f4;color:white;border:0;border-radius:4px;padding:10px 16px;cursor:pointer}
+pre{background:#212121;color:#e0e0e0;padding:16px;border-radius:4px;overflow:auto;max-height:65vh;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+#status{color:#727272}
+@media(max-width:768px){main{padding:0 16px}}
+</style></head><body>
+<header><nav><a href=".">← Dashboard</a><h1>Bus-Logs</h1></nav></header>
+<main><div class="card">
+<p>Bus-Kommunikation: RX = empfangen, TX = gesendet. Anzeige als Hexadezimaldaten mit Zeitstempel.</p>
+<p>Die letzten 500 Einträge bleiben bis zum Neustart im Arbeitsspeicher.
+Byte-Gruppen sind keine Protokollrahmen; bei Signalinvertierung werden die logischen Bytes angezeigt.</p>
+<div class="controls"><button id="pause" type="button">Anzeige pausieren</button>
+<label><input id="follow" type="checkbox" checked> Automatisch scrollen</label></div>
+<p id="status" role="status">Logs werden geladen…</p>
+<pre id="logs">Noch keine Bus-Kommunikation aufgezeichnet.</pre>
+</div></main>
+<script>
+const logs=document.getElementById('logs'),status=document.getElementById('status');
+const pause=document.getElementById('pause'),follow=document.getElementById('follow');
+let paused=false;
+pause.onclick=()=>{
+    paused=!paused;
+    pause.textContent=paused?'Anzeige fortsetzen':'Anzeige pausieren';
+    status.textContent=paused?'Anzeige pausiert; Aufzeichnung läuft weiter.':'Live-Anzeige aktiv.';
+};
+async function refresh(){
+    try{
+        if(!paused){
+            const response=await fetch('api/bus-logs',{cache:'no-store'});
+            if(!response.ok)throw new Error('HTTP '+response.status);
+            const text=await response.text();
+            if(!paused){
+                logs.textContent=text||'Noch keine Bus-Kommunikation aufgezeichnet.';
+                status.textContent='Live-Anzeige aktiv · Aktualisierung alle 2 Sekunden';
+                if(follow.checked)logs.scrollTop=logs.scrollHeight;
+            }
+        }
+    }catch(error){
+        if(!paused)status.textContent='Logs konnten nicht geladen werden. Erneuter Versuch folgt.';
+    }finally{setTimeout(refresh,2000);}
+}
+refresh();
+</script></body></html>)HTML";
+}
+
+const char* getRemoteHTML() {
+    return R"HTML(<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viessmann Decoder - Vitotrol</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:#212121;font-family:Roboto,Noto,sans-serif}
+header{background:#03a9f4;color:white;padding:16px 24px}header a{color:white}
+main{max-width:1000px;margin:24px auto;padding:0 16px}
+section{background:white;padding:20px;margin-bottom:20px;border-radius:8px;box-shadow:0 2px 5px #0003}
+h1{font-size:20px}form{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
+input,select,button{padding:10px;border:1px solid #ccc;border-radius:4px;font:inherit}
+button{background:#03a9f4;color:white;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere}
+</style></head><body>
+<header><a href=".">← Dashboard</a> · <a href="logs">Bus-Logs</a></header>
+<main><h1>Vitotrol-Steuerung (experimentell)</h1>
+<section><p id="state" role="status">Status wird geladen…</p>
+<p>1200 Baud, 8E1. Die angezeigten Steuerwerte sind lokale Vorgaben, keine Bestätigung der Regelung.
+Gesendet wird nur nach Freigabe durch den Master. Vor Verwendung am Zielgerät prüfen.</p>
+<p id="feedback" role="status"></p>
+<form id="roomForm"><label>Raum-Ist °C <input id="room" type="number" min="-20" max="50" step="0.1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="desiredForm"><label>Raum-Soll normal °C <input id="desired" type="number" min="5" max="35" step="1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="reducedForm"><label>Raum-Soll reduziert °C <input id="reduced" type="number" min="5" max="35" step="1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="modeForm"><label>Befehl <select id="mode">
+<option value="heat_water">Heizen + Warmwasser</option><option value="water">Nur Warmwasser</option>
+<option value="off">Abschaltbetrieb</option><option value="party_on">Partybetrieb an</option>
+<option value="party_off">Partybetrieb aus</option><option value="economy_on">Sparbetrieb an</option>
+<option value="economy_off">Sparbetrieb aus</option></select></label>
+<label>Party-Soll °C (bei Party an) <input id="party" type="number" min="5" max="35" step="1" required disabled></label>
+<button type="submit">Übermitteln</button></form>
+<p>Partytemperatur ist nur im angewendeten WiFi-Profil verfügbar.</p>
+<p id="requested"></p></section>
+<section><h2>Protokollvariante</h2>
+<p>Die Quellen widersprechen sich bei Schreibquittierungen und Datensatzzuordnung.
+WiFi nutzt PONG bei gezielten Schreibtelegrammen und die Datensätze 0x20/0x15.
+OpenV nutzt keine Schreibquittierungen und eine slotabhängige Zuordnung.
+Broadcasts werden ohne Antwort verarbeitet. Das Profil gilt bis Neustart oder Neuverbindung.</p>
+<form id="profileForm"><label>Profil <select id="profile"><option value="wifi">WiFiVitotrol</option>
+<option value="openv">OpenV</option></select></label><button type="submit">Profil übernehmen</button></form>
+<p id="diagnostics"></p></section>
+<section><h2>Empfangene Daten</h2><p id="sensors">Noch keine Messdaten.</p>
+<p>Nur belegte Felder werden interpretiert. Rohdatensätze sind bereits XOR-dekodiert.
+Alter beachten: alte Daten sind keine aktuellen Messwerte.</p><pre id="datasets">Noch keine Datensätze.</pre></section>
+</main><script>
+const el=id=>document.getElementById(id);
+const dirty=new Set();
+const revisions=new Map();
+let appliedProfile=null;
+['room','desired','reduced','party','mode','profile'].forEach(id=>el(id).addEventListener('input',()=>{
+    dirty.add(id);revisions.set(id,(revisions.get(id)||0)+1);
+}));
+function sync(id,value){
+    if(!dirty.has(id)&&document.activeElement!==el(id))el(id).value=value;
+}
+async function send(value,id){
+    const feedback=el('feedback');
+    const revision=revisions.get(id)||0;
+    const partyRevision=revisions.get('party')||0;
+    try{
+        const response=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'HTTP '+response.status);
+        if((revisions.get(id)||0)===revision)dirty.delete(id);
+        if(value.party_room_temperature!==undefined &&
+           (revisions.get('party')||0)===partyRevision)dirty.delete('party');
+        feedback.textContent='Vorgabe übernommen; Übertragung erfolgt bei Master-Freigabe.';
+        await refresh();
+    }catch(error){feedback.textContent='Nicht übernommen: '+error.message;}
+}
+[['roomForm','room','room_temperature'],['desiredForm','desired','desired_room_temperature'],
+ ['reducedForm','reduced','reduced_room_temperature'],['modeForm','mode','mode'],['profileForm','profile','profile']]
+.forEach(([form,id,key])=>el(form).onsubmit=event=>{
+    event.preventDefault();
+    const value=(id==='mode'||id==='profile')?el(id).value:Number(el(id).value);
+    const command={[key]:value};
+    if(id==='mode'&&value==='party_on'&&appliedProfile==='wifi')
+        command.party_room_temperature=Number(el('party').value);
+    send(command,id);
+});
+async function refresh(){
+    try{
+        const response=await fetch('api/remote',{cache:'no-store'});
+        if(!response.ok)throw new Error('HTTP '+response.status);
+        const data=await response.json();
+        appliedProfile=data.profile;
+        el('party').disabled=appliedProfile!=='wifi';
+        el('state').textContent=data.model+' · Slot '+data.slot+' · '+(data.online?'Master erreichbar':'Keine aktuellen Master-Telegramme');
+        sync('room',data.room_temperature);sync('desired',data.desired_room_temperature);
+        sync('reduced',data.reduced_room_temperature);sync('party',data.party_room_temperature);
+        sync('profile',data.profile);
+        const baseMode={200:'off',201:'water',202:'heat_water'};
+        if(baseMode[data.mode])sync('mode',baseMode[data.mode]);
+        el('requested').textContent='Lokale Vorgaben: Betriebsart 0x'+data.mode.toString(16).toUpperCase()+
+            ', Party '+(data.requested_party_mode?'an':'aus')+', Sparbetrieb '+(data.requested_economy_mode?'an':'aus');
+        el('diagnostics').textContent='Wartende Befehle: '+data.pending_commands+' · CRC-Fehler: '+data.crc_errors+
+            ' · Ungültige Telegramme: '+data.malformed_frames+' · Unbekannte Befehle: '+data.unknown_commands;
+        el('sensors').textContent='Außentemperatur: '+(data.outside_temperature===null?'nicht verfügbar':data.outside_temperature+' °C')+
+            ' · Heizfreigabe: '+(data.heating_enabled===null?'nicht verfügbar':(data.heating_enabled?'an':'aus'));
+        el('datasets').textContent=data.datasets.map(dataset=>'0x'+dataset.id.toString(16).toUpperCase()+
+            ' · Alter '+Math.floor(dataset.age_ms/1000)+' s · '+dataset.data.map(byte=>byte.toString(16).toUpperCase().padStart(2,'0')).join(' '))
+            .join('\n')||'Noch keine Datensätze.';
+    }catch(error){el('state').textContent='Status nicht verfügbar: '+error.message;}
+}
+async function poll(){await refresh();setTimeout(poll,2000);}
+poll();
+</script></body></html>)HTML";
+}
+
 // HTTP request handler
 static MHD_Result handle_request(void *cls,
                                  struct MHD_Connection *connection,
@@ -1177,34 +1704,49 @@ static MHD_Result handle_request(void *cls,
     struct MHD_Response *response;
     MHD_Result ret;
 
+    if (strcmp(url, "/api/system") == 0) {
+        if (strcmp(method, "GET") != 0)
+            return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED, "{\"error\":\"Use GET\"}");
+        std::lock_guard<std::mutex> lock(restartMutex);
+        char system[320];
+        snprintf(system, sizeof(system),
+                 "{\"restart_supported\":%s,\"restart_pending\":%s,"
+                 "\"restart_mechanism\":\"process_exit\","
+                 "\"restart_manager_required\":true,\"restart_exit_code\":75,"
+                 "\"instance_id\":\"%s\"}",
+                 containerRestartSupported() ? "true" : "false",
+                 restartPending ? "true" : "false", processInstanceId.c_str());
+        return queueJson(connection, MHD_HTTP_OK, system);
+    }
+    if (strcmp(url, "/api/restart") == 0)
+        return handleRestartApi(connection, method, upload_data_size, upload_data, con_cls);
+
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/api/remote") == 0) {
         return handleRemoteApi(connection, method, upload_data_size, upload_data, con_cls);
     }
     if (strcmp(url, "/api/settings") == 0) {
         return handleSettingsApi(connection, method, upload_data_size, upload_data, con_cls);
     }
+    if (strcmp(url, "/logs") == 0 || strcmp(url, "/api/bus-logs") == 0) {
+        if (strcmp(method, "GET") != 0) {
+            return queueJson(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
+                             "{\"error\":\"Use GET\"}");
+        }
+        const bool isPage = strcmp(url, "/logs") == 0;
+        const std::string body = isPage ? getBusLogsHTML() : generateBusLogs();
+        response = MHD_create_response_from_buffer(body.size(), (void*)body.data(),
+                                                   MHD_RESPMEM_MUST_COPY);
+        if (!response) return MHD_NO;
+        MHD_add_response_header(response, "Content-Type",
+                                isPage ? "text/html; charset=utf-8" : "text/plain; charset=utf-8");
+        MHD_add_response_header(response, "Cache-Control", "no-store");
+        MHD_add_response_header(response, "X-Content-Type-Options", "nosniff");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+        MHD_destroy_response(response);
+        return ret;
+    }
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/remote") == 0) {
-        const char* html =
-            "<!doctype html><html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
-            "<title>Vitotrol Remote</title><body><h1>Vitotrol Emulation</h1>"
-            "<p id='state'>Loading…</p><label>Room temperature °C "
-            "<input id='room' type='number' min='-20' max='50' step='0.1'></label>"
-            "<button onclick='send({room_temperature:+document.getElementById(\"room\").value})'>Set</button><br>"
-            "<label>Desired temperature °C <input id='desired' type='number' min='5' max='35' step='1'></label>"
-            "<button onclick='send({desired_room_temperature:+document.getElementById(\"desired\").value})'>Set</button><br>"
-            "<label>Mode <select id='mode'><option value='heat_water'>Heating + hot water</option>"
-            "<option value='water'>Hot water only</option><option value='off'>Off</option>"
-            "<option value='party_on'>Party on</option><option value='party_off'>Party off</option>"
-            "<option value='economy_on'>Economy on</option><option value='economy_off'>Economy off</option>"
-            "</select></label><button onclick='send({mode:document.getElementById(\"mode\").value})'>Apply</button>"
-            "<script>const stateEl=document.getElementById('state'),roomEl=document.getElementById('room'),"
-            "desiredEl=document.getElementById('desired'),modeEl=document.getElementById('mode');"
-            "async function refresh(){let d=await(await fetch('api/remote')).json();"
-            "stateEl.textContent=d.model+' / slot '+d.slot+' / '+(d.online?'Online':'Waiting for KM1');"
-            "roomEl.value=d.room_temperature;desiredEl.value=d.desired_room_temperature;}"
-            "async function send(v){let r=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},"
-            "body:JSON.stringify(v)});let d=await r.json();if(!r.ok)alert(d.error);refresh();}"
-            "refresh();setInterval(refresh,3000);</script></body></html>";
+        const char* html = getRemoteHTML();
         response = MHD_create_response_from_buffer(strlen(html), (void*)html, MHD_RESPMEM_PERSISTENT);
         if (!response) return MHD_NO;
         MHD_add_response_header(response, "Content-Type", "text/html; charset=utf-8");
@@ -1215,10 +1757,11 @@ static MHD_Result handle_request(void *cls,
 
     // Handle routes
     if (strcmp(url, "/") == 0) {
-        const char* html = getDashboardHTML();
-        response = MHD_create_response_from_buffer(strlen(html),
-                                                   (void*)html,
-                                                   MHD_RESPMEM_PERSISTENT);
+        std::string html = getDashboardHTML();
+        html.insert(html.find("</body>"), getRestartHTML());
+        response = MHD_create_response_from_buffer(html.size(),
+                                                   (void*)html.data(),
+                                                   MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
         MHD_destroy_response(response);
@@ -1245,9 +1788,10 @@ static MHD_Result handle_request(void *cls,
         return ret;
     }
     else if (strcmp(url, "/settings") == 0) {
-        const char* html = getSettingsHTML();
-        response = MHD_create_response_from_buffer(strlen(html),
-                                                   (void*)html,
+        std::string html = getSettingsHTML();
+        html.insert(html.find("</body>"), getRestartHTML());
+        response = MHD_create_response_from_buffer(html.size(),
+                                                   (void*)html.data(),
                                                    MHD_RESPMEM_MUST_COPY);
         MHD_add_response_header(response, "Content-Type", "text/html");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
@@ -1299,6 +1843,12 @@ void printHelp(const char* progname) {
     printf("  -i <invert>    Invert serial signals: true, false (default: false)\n");
     printf("  -w <port>      Web server port (default: 8099)\n");
     printf("  -h             Show this help\n");
+}
+
+static void requestCompleted(void*, MHD_Connection*, void** context,
+                             enum MHD_RequestTerminationCode) {
+    delete static_cast<RemotePostData*>(*context);
+    *context = nullptr;
 }
 
 int main(int argc, char* argv[]) {
@@ -1381,6 +1931,7 @@ int main(int argc, char* argv[]) {
     printf("\n");
 
     // Try to initialize serial port (don't exit on failure)
+    vbusSerial.setTrafficCallback(recordBusTraffic);
     bool connected = false;
     for (const auto& port : discoverSerialPorts()) {
         printf("Attempting to connect on %s...\n", port.c_str());
@@ -1400,6 +1951,7 @@ int main(int argc, char* argv[]) {
                              config.webPort,
                              NULL, NULL,
                              &handle_request, NULL,
+                             MHD_OPTION_NOTIFY_COMPLETED, &requestCompleted, NULL,
                              MHD_OPTION_END);
 
     if (daemon == NULL) {
@@ -1418,8 +1970,16 @@ int main(int argc, char* argv[]) {
     // Main loop with serial port reconnection logic
     int reconnectCounter = 0;
     int kmbusPollCounter = 0;  // Counter for KM-Bus polling
+    bool intentionalRestart = false;
 
     while (running) {
+        {
+            std::lock_guard<std::mutex> lock(restartMutex);
+            if (restartPending && std::chrono::steady_clock::now() >= restartDeadline) {
+                intentionalRestart = true;
+                break;
+            }
+        }
         bool shouldReconnect;
 
         pthread_mutex_lock(&data_mutex);
@@ -1464,7 +2024,12 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        usleep(LOOP_DELAY_US);  // 10ms delay
+        if (config.protocol == PROTOCOL_KM_REMOTE && serialConnected) {
+            // Wake on RX instead of imposing a fixed delay on every slave response.
+            vbusSerial.waitForData(10);
+        } else {
+            usleep(LOOP_DELAY_US);
+        }
     }
 
     // Cleanup
@@ -1472,7 +2037,10 @@ int main(int argc, char* argv[]) {
     MHD_stop_daemon(daemon);
     if (vbus) delete vbus;
     if (vitotrol) delete vitotrol;
+    vbusSerial.end();
 
     printf("Shutdown complete\n");
-    return 0;
+    // Exit the entrypoint, not just re-exec the server: the runtime then runs
+    // /run.sh again. HA needs its watchdog; Docker needs a restart policy.
+    return intentionalRestart ? RESTART_EXIT_CODE : 0;
 }

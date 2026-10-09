@@ -32,11 +32,16 @@ public:
     
     // Additional methods
     bool isOpen() const { return fd >= 0; }
+    void waitForData(int timeoutMs);
+    // Configure before serial processing starts; reports logical bytes after RX/before TX inversion.
+    using TrafficCallback = void (*)(bool transmitted, const uint8_t* data, size_t size);
+    void setTrafficCallback(TrafficCallback callback) { trafficCallback = callback; }
     
 private:
     int fd;
     struct termios oldtio;
     bool invertSignal;
+    TrafficCallback trafficCallback = nullptr;
     
     bool configure(unsigned long baud, uint8_t config);
     speed_t getBaudRate(unsigned long baud);

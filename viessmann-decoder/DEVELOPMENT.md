@@ -154,6 +154,31 @@ docker run -it --rm \
   viessmann-decoder-test
 ```
 
+### KM-Bus regression tests
+
+The dependency-free C++ tests use a fake serial stream and clock to exercise
+telegram validation, CRC, profiles, queues, timeouts and partial writes.
+Compile with the same C++17 compiler used by the add-on:
+
+```bash
+cd /pfad/zum/Viessmann-HA-Addon/viessmann-decoder
+g++ -std=c++17 -Wall -Wextra -Ilinux/include \
+  linux/tests/KMBusVitotrol_test.cpp linux/src/KMBusVitotrol.cpp \
+  -o /tmp/km-bus-tests
+/tmp/km-bus-tests
+```
+
+The HTTP tests use Python's standard library and a pseudo-terminal, with no
+heater attached. Point `VIESSMANN_WEBSERVER` at a natively compiled webserver:
+
+```bash
+VIESSMANN_WEBSERVER=/tmp/viessmann_webserver \
+  python3 -m unittest discover -s linux/tests -p 'test_remote_api.py' -v
+```
+
+These tests validate implementation contracts; they do not prove electrical
+compatibility or response timing on a real controller.
+
 ## Dependencies
 
 The add-on uses:

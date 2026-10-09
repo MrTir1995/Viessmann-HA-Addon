@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <string.h>
+#include <poll.h>
 
 LinuxSerial::LinuxSerial() : fd(-1), invertSignal(false) {
 }
@@ -58,6 +59,16 @@ int LinuxSerial::available() {
         return 0;
     }
     return bytes_available;
+}
+
+void LinuxSerial::waitForData(int timeoutMs) {
+    if (timeoutMs <= 0) return;
+    struct pollfd descriptor = {fd, POLLIN, 0};
+    const int result = poll(&descriptor, 1, timeoutMs);
+    if ((result < 0 && errno != EINTR) ||
+        (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        usleep(static_cast<useconds_t>(timeoutMs) * 1000);
+    }
 }
 
 int LinuxSerial::read() {

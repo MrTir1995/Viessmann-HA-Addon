@@ -387,6 +387,7 @@ char* generateDataJSON() {
 
 struct RemotePostData {
     std::string body;
+    bool tooLarge = false;
 };
 
 int parseJsonNumber(const std::string& body, const char* key, float& value) {
@@ -426,14 +427,13 @@ MHD_Result queueJson(MHD_Connection* connection, unsigned int status, const char
         strlen(body), (void*)body, MHD_RESPMEM_MUST_COPY);
     if (!response) return MHD_NO;
     MHD_add_response_header(response, "Content-Type", "application/json");
+    MHD_add_response_header(response, "Cache-Control", "no-store");
     const MHD_Result result = MHD_queue_response(connection, status, response);
     MHD_destroy_response(response);
     return result;
 }
 
-struct SettingsPostData {
-    std::string body;
-};
+using SettingsPostData = RemotePostData;
 
 int parseJsonBool(const std::string& body, const char* key, bool& value) {
     const std::string field = std::string("\"") + key + "\"";
@@ -508,16 +508,21 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
         return MHD_YES;
     }
     if (*uploadDataSize > 0) {
-        if (request->body.size() + *uploadDataSize > 1024) {
-            delete request;
-            *connectionContext = nullptr;
-            *uploadDataSize = 0;
-            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
-                             "{\"error\":\"Request body too large\"}");
+        if (*uploadDataSize > 1024 - request->body.size()) {
+            request->tooLarge = true;
+            request->body.clear();
         }
-        request->body.append(uploadData, *uploadDataSize);
+        if (!request->tooLarge) {
+            request->body.append(uploadData, *uploadDataSize);
+        }
         *uploadDataSize = 0;
         return MHD_YES;
+    }
+    if (request->tooLarge) {
+        delete request;
+        *connectionContext = nullptr;
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                         "{\"error\":\"Request body too large\"}");
     }
 
     std::string protocol;
@@ -576,26 +581,166 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
                      "{\"status\":\"saved\",\"restart_required\":true}");
 }
 
+bool parseRemoteUpdate(const std::string& body, KMBusVitotrol::ControlUpdate& update,
+                       std::string& mode, std::string& profile) {
+    size_t position = 0;
+    auto skipSpace = [&]() {
+        while (position < body.size() &&
+               (body[position] == ' ' || body[position] == '\t' ||
+                body[position] == '\r' || body[position] == '\n')) ++position;
+    };
+    auto quoted = [&](std::string& value) {
+        if (position >= body.size() || body[position++] != '"') return false;
+        const size_t start = position;
+        while (position < body.size() && body[position] != '"') {
+            if (static_cast<unsigned char>(body[position]) < 0x20 || body[position] == '\\')
+                return false;
+            ++position;
+        }
+        if (position >= body.size()) return false;
+        value = body.substr(start, position++ - start);
+        return true;
+    };
+    skipSpace();
+    if (position >= body.size() || body[position++] != '{') return false;
+    std::unordered_set<std::string> fields;
+    while (true) {
+        skipSpace();
+        std::string key;
+        if (!quoted(key) || !fields.insert(key).second) return false;
+        skipSpace();
+        if (position >= body.size() || body[position++] != ':') return false;
+        skipSpace();
+        if (key == "mode" || key == "profile") {
+            std::string& value = key == "mode" ? mode : profile;
+            if (!quoted(value)) return false;
+            if (key == "mode") {
+                if (value != "off" && value != "water" && value != "heat_water" &&
+                    value != "party_on" && value != "party_off" &&
+                    value != "economy_on" && value != "economy_off") return false;
+                update.hasMode = true;
+                update.mode = mode.c_str();
+            } else {
+                if (value != "wifi" && value != "openv") return false;
+                update.hasProfile = true;
+                update.profile = profile.c_str();
+            }
+        } else {
+            if (key != "room_temperature" && key != "desired_room_temperature" &&
+                key != "reduced_room_temperature") return false;
+            const size_t start = position;
+            if (position < body.size() && body[position] == '-') ++position;
+            if (position >= body.size() || body[position] < '0' || body[position] > '9')
+                return false;
+            if (body[position] == '0') ++position;
+            else while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                ++position;
+            if (position < body.size() && body[position] == '.') {
+                ++position;
+                const size_t fraction = position;
+                while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                    ++position;
+                if (fraction == position) return false;
+            }
+            if (position < body.size() && (body[position] == 'e' || body[position] == 'E')) {
+                ++position;
+                if (position < body.size() && (body[position] == '+' || body[position] == '-'))
+                    ++position;
+                const size_t exponent = position;
+                while (position < body.size() && body[position] >= '0' && body[position] <= '9')
+                    ++position;
+                if (exponent == position) return false;
+            }
+            const std::string token = body.substr(start, position - start);
+            char* end = nullptr;
+            const float value = strtof(token.c_str(), &end);
+            if (*end || !std::isfinite(value)) return false;
+            if (key == "room_temperature") {
+                if (value < -20.0f || value > 50.0f) return false;
+                update.hasRoomTemperature = true;
+                update.roomTemperature = value;
+            } else {
+                if (value < 5.0f || value > 35.0f || value != std::round(value)) return false;
+                if (key == "desired_room_temperature") {
+                    update.hasDesiredRoomTemperature = true;
+                    update.desiredRoomTemperature = value;
+                } else {
+                    update.hasReducedRoomTemperature = true;
+                    update.reducedRoomTemperature = value;
+                }
+            }
+        }
+        skipSpace();
+        if (position >= body.size()) return false;
+        const char separator = body[position++];
+        if (separator == '}') {
+            skipSpace();
+            return position == body.size();
+        }
+        if (separator != ',') return false;
+    }
+}
+
 MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
                            size_t* uploadDataSize, const char* uploadData,
                            void** connectionContext) {
     if (strcmp(method, "GET") == 0) {
-        char json[512];
+        char json[1024];
         pthread_mutex_lock(&data_mutex);
         const bool connected = serialConnected && vitotrol;
         snprintf(json, sizeof(json),
                  "{\"model\":\"Vitotrol %s\",\"slot\":%u,\"online\":%s,"
                  "\"room_temperature\":%.1f,\"desired_room_temperature\":%.1f,"
-                 "\"mode\":%u,\"last_master_dataset\":%u}",
+                 "\"reduced_room_temperature\":%.1f,"
+                 "\"mode\":%u,\"last_master_dataset\":%u,"
+                 "\"profile\":\"%s\",\"pending_commands\":%u,"
+                 "\"crc_errors\":%u,\"malformed_frames\":%u,\"unknown_commands\":%u",
                  config.remoteModelId == 0x38 ? "300" : "200",
                  config.remoteSlot,
                  connected && vitotrol->isOnline() ? "true" : "false",
                  connected ? vitotrol->getCurrentRoomTemperature() : 0.0,
                  connected ? vitotrol->getDesiredRoomTemperature() : 0.0,
+                 connected ? vitotrol->getReducedRoomTemperature() : 0.0,
                  connected ? vitotrol->getOperatingMode() : 0,
-                 connected ? vitotrol->getLastMasterDataset() : 0);
+                 connected ? vitotrol->getLastMasterDataset() : 0,
+                 connected ? vitotrol->getProtocolProfile() : "wifi",
+                 connected ? vitotrol->getPendingCommandCount() : 0,
+                 connected ? vitotrol->getCrcErrorCount() : 0,
+                 connected ? vitotrol->getMalformedFrameCount() : 0,
+                 connected ? vitotrol->getUnknownCommandCount() : 0);
+        std::string body(json);
+        float outsideTemperature = 0;
+        bool heatingEnabled = false;
+        const bool hasOutside = connected && vitotrol->getOutsideTemperature(outsideTemperature);
+        const bool hasHeating = connected && vitotrol->getHeatingEnabled(heatingEnabled);
+        body += ",\"outside_temperature\":";
+        body += hasOutside ? std::to_string(outsideTemperature) : "null";
+        body += ",\"heating_enabled\":";
+        body += hasHeating ? (heatingEnabled ? "true" : "false") : "null";
+        body += ",\"requested_party_mode\":";
+        body += connected && vitotrol->getPartyEnabled() ? "true" : "false";
+        body += ",\"requested_economy_mode\":";
+        body += connected && vitotrol->getEconomyEnabled() ? "true" : "false";
+        body += ",\"datasets\":[";
+        bool first = true;
+        for (uint16_t id = 0; connected && id < 254; ++id) {
+            const uint8_t* bytes = nullptr;
+            uint8_t length = 0;
+            uint32_t receivedAt = 0;
+            if (!vitotrol->getDataset(static_cast<uint8_t>(id), bytes, length, receivedAt)) continue;
+            if (!first) body += ',';
+            first = false;
+            body += "{\"id\":" + std::to_string(id) + ",\"age_ms\":" +
+                   std::to_string(static_cast<uint32_t>(millis()) - receivedAt) + ",\"data\":[";
+            for (uint8_t i = 0; i < length; ++i) {
+                if (i) body += ',';
+                body += std::to_string(bytes[i]);
+            }
+            body += "]}";
+        }
+        body += "]}";
         pthread_mutex_unlock(&data_mutex);
-        return queueJson(connection, MHD_HTTP_OK, json);
+        return queueJson(connection, MHD_HTTP_OK, body.c_str());
     }
 
     if (strcmp(method, "POST") != 0) {
@@ -610,37 +755,33 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
         return MHD_YES;
     }
     if (*uploadDataSize > 0) {
-        if (request->body.size() + *uploadDataSize > 1024) {
-            delete request;
-            *connectionContext = nullptr;
-            *uploadDataSize = 0;
-            return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
-                             "{\"error\":\"Request body too large\"}");
+        if (*uploadDataSize > 1024 - request->body.size()) {
+            request->tooLarge = true;
+            request->body.clear();
         }
-        request->body.append(uploadData, *uploadDataSize);
+        if (!request->tooLarge) {
+            request->body.append(uploadData, *uploadDataSize);
+        }
         *uploadDataSize = 0;
         return MHD_YES;
     }
+    if (request->tooLarge) {
+        delete request;
+        *connectionContext = nullptr;
+        return queueJson(connection, MHD_HTTP_PAYLOAD_TOO_LARGE,
+                         "{\"error\":\"Request body too large\"}");
+    }
 
-    float currentTemperature = 0;
-    float desiredTemperature = 0;
+    KMBusVitotrol::ControlUpdate update;
     std::string mode;
-    const int currentField = parseJsonNumber(request->body, "room_temperature", currentTemperature);
-    const int desiredField = parseJsonNumber(request->body, "desired_room_temperature", desiredTemperature);
-    const int modeField = parseJsonString(request->body, "mode", mode);
-    const bool valid =
-        currentField >= 0 && desiredField >= 0 && modeField >= 0 &&
-        (currentField || desiredField || modeField) &&
-        (!currentField || (currentTemperature >= -20.0f && currentTemperature <= 50.0f)) &&
-        (!desiredField || (desiredTemperature >= 5.0f && desiredTemperature <= 35.0f));
+    std::string profile;
+    const bool valid = parseRemoteUpdate(request->body, update, mode, profile);
 
     bool applied = false;
     if (valid) {
         pthread_mutex_lock(&data_mutex);
         if (serialConnected && vitotrol) {
-            applied = (!currentField || vitotrol->setCurrentRoomTemperature(currentTemperature)) &&
-                      (!desiredField || vitotrol->setDesiredRoomTemperature(desiredTemperature)) &&
-                      (!modeField || vitotrol->setOperatingMode(mode.c_str()));
+            applied = vitotrol->applyControlUpdate(update);
         }
         pthread_mutex_unlock(&data_mutex);
     }
@@ -649,7 +790,7 @@ MHD_Result handleRemoteApi(MHD_Connection* connection, const char* method,
     *connectionContext = nullptr;
     if (!valid) {
         return queueJson(connection, MHD_HTTP_BAD_REQUEST,
-                         "{\"error\":\"Invalid values or unsupported mode\"}");
+                         "{\"error\":\"Invalid JSON, field, value, mode or profile\"}");
     }
     if (!applied) {
         return queueJson(connection, MHD_HTTP_SERVICE_UNAVAILABLE,
@@ -720,6 +861,7 @@ const char* getDashboardHTML() {
     "<script>"
     "function updateData(){"
     "fetch('data').then(r=>r.json()).then(d=>{"
+    "document.getElementById('remoteControls').style.display=d.protocol===4?'flex':'none';"
     "const statusDot=document.getElementById('statusDot');"
     "const statusText=document.getElementById('statusText');"
     "const protocolText=document.getElementById('protocol');"
@@ -810,6 +952,8 @@ const char* getDashboardHTML() {
     "<svg class='button-icon' viewBox='0 0 24 24' fill='currentColor'><path d='M4 3h16v18H4V3m3 4v2h10V7H7m0 4v2h10v-2H7m0 4v2h7v-2H7Z'/></svg>"
     "<span>Bus-Logs</span>"
     "</a>"
+    "<a href='remote' id='remoteControls' class='nav-button' style='display:none'>"
+    "<span>Vitotrol-Steuerung</span></a>"
     "</div>"
     "<div class='card'>"
     "<div class='card-header'>"
@@ -1282,6 +1426,104 @@ refresh();
 </script></body></html>)HTML";
 }
 
+const char* getRemoteHTML() {
+    return R"HTML(<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viessmann Decoder - Vitotrol</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:#212121;font-family:Roboto,Noto,sans-serif}
+header{background:#03a9f4;color:white;padding:16px 24px}header a{color:white}
+main{max-width:1000px;margin:24px auto;padding:0 16px}
+section{background:white;padding:20px;margin-bottom:20px;border-radius:8px;box-shadow:0 2px 5px #0003}
+h1{font-size:20px}form{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
+input,select,button{padding:10px;border:1px solid #ccc;border-radius:4px;font:inherit}
+button{background:#03a9f4;color:white;cursor:pointer}pre{white-space:pre-wrap;overflow-wrap:anywhere}
+</style></head><body>
+<header><a href=".">← Dashboard</a> · <a href="logs">Bus-Logs</a></header>
+<main><h1>Vitotrol-Steuerung (experimentell)</h1>
+<section><p id="state" role="status">Status wird geladen…</p>
+<p>1200 Baud, 8E1. Die angezeigten Steuerwerte sind lokale Vorgaben, keine Bestätigung der Regelung.
+Gesendet wird nur nach Freigabe durch den Master. Vor Verwendung am Zielgerät prüfen.</p>
+<p id="feedback" role="status"></p>
+<form id="roomForm"><label>Raum-Ist °C <input id="room" type="number" min="-20" max="50" step="0.1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="desiredForm"><label>Raum-Soll normal °C <input id="desired" type="number" min="5" max="35" step="1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="reducedForm"><label>Raum-Soll reduziert °C <input id="reduced" type="number" min="5" max="35" step="1" required></label>
+<button type="submit">Übermitteln</button></form>
+<form id="modeForm"><label>Befehl <select id="mode">
+<option value="heat_water">Heizen + Warmwasser</option><option value="water">Nur Warmwasser</option>
+<option value="off">Abschaltbetrieb</option><option value="party_on">Partybetrieb an</option>
+<option value="party_off">Partybetrieb aus</option><option value="economy_on">Sparbetrieb an</option>
+<option value="economy_off">Sparbetrieb aus</option></select></label><button type="submit">Übermitteln</button></form>
+<p id="requested"></p></section>
+<section><h2>Protokollvariante</h2>
+<p>Die Quellen widersprechen sich bei Schreibquittierungen und Datensatzzuordnung.
+WiFi nutzt PONG bei gezielten Schreibtelegrammen und die Datensätze 0x20/0x15.
+OpenV nutzt keine Schreibquittierungen und eine slotabhängige Zuordnung.
+Broadcasts werden ohne Antwort verarbeitet. Das Profil gilt bis Neustart oder Neuverbindung.</p>
+<form id="profileForm"><label>Profil <select id="profile"><option value="wifi">WiFiVitotrol</option>
+<option value="openv">OpenV</option></select></label><button type="submit">Profil übernehmen</button></form>
+<p id="diagnostics"></p></section>
+<section><h2>Empfangene Daten</h2><p id="sensors">Noch keine Messdaten.</p>
+<p>Nur belegte Felder werden interpretiert. Rohdatensätze sind bereits XOR-dekodiert.
+Alter beachten: alte Daten sind keine aktuellen Messwerte.</p><pre id="datasets">Noch keine Datensätze.</pre></section>
+</main><script>
+const el=id=>document.getElementById(id);
+const dirty=new Set();
+const revisions=new Map();
+['room','desired','reduced','mode','profile'].forEach(id=>el(id).addEventListener('input',()=>{
+    dirty.add(id);revisions.set(id,(revisions.get(id)||0)+1);
+}));
+function sync(id,value){
+    if(!dirty.has(id)&&document.activeElement!==el(id))el(id).value=value;
+}
+async function send(value,id){
+    const feedback=el('feedback');
+    const revision=revisions.get(id)||0;
+    try{
+        const response=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
+        const data=await response.json();
+        if(!response.ok)throw new Error(data.error||'HTTP '+response.status);
+        if((revisions.get(id)||0)===revision)dirty.delete(id);
+        feedback.textContent='Vorgabe übernommen; Übertragung erfolgt bei Master-Freigabe.';
+        await refresh();
+    }catch(error){feedback.textContent='Nicht übernommen: '+error.message;}
+}
+[['roomForm','room','room_temperature'],['desiredForm','desired','desired_room_temperature'],
+ ['reducedForm','reduced','reduced_room_temperature'],['modeForm','mode','mode'],['profileForm','profile','profile']]
+.forEach(([form,id,key])=>el(form).onsubmit=event=>{
+    event.preventDefault();
+    const value=(id==='mode'||id==='profile')?el(id).value:Number(el(id).value);
+    send({[key]:value},id);
+});
+async function refresh(){
+    try{
+        const response=await fetch('api/remote',{cache:'no-store'});
+        if(!response.ok)throw new Error('HTTP '+response.status);
+        const data=await response.json();
+        el('state').textContent=data.model+' · Slot '+data.slot+' · '+(data.online?'Master erreichbar':'Keine aktuellen Master-Telegramme');
+        sync('room',data.room_temperature);sync('desired',data.desired_room_temperature);
+        sync('reduced',data.reduced_room_temperature);sync('profile',data.profile);
+        const baseMode={200:'off',201:'water',202:'heat_water'};
+        if(baseMode[data.mode])sync('mode',baseMode[data.mode]);
+        el('requested').textContent='Lokale Vorgaben: Betriebsart 0x'+data.mode.toString(16).toUpperCase()+
+            ', Party '+(data.requested_party_mode?'an':'aus')+', Sparbetrieb '+(data.requested_economy_mode?'an':'aus');
+        el('diagnostics').textContent='Wartende Befehle: '+data.pending_commands+' · CRC-Fehler: '+data.crc_errors+
+            ' · Ungültige Telegramme: '+data.malformed_frames+' · Unbekannte Befehle: '+data.unknown_commands;
+        el('sensors').textContent='Außentemperatur: '+(data.outside_temperature===null?'nicht verfügbar':data.outside_temperature+' °C')+
+            ' · Heizfreigabe: '+(data.heating_enabled===null?'nicht verfügbar':(data.heating_enabled?'an':'aus'));
+        el('datasets').textContent=data.datasets.map(dataset=>'0x'+dataset.id.toString(16).toUpperCase()+
+            ' · Alter '+Math.floor(dataset.age_ms/1000)+' s · '+dataset.data.map(byte=>byte.toString(16).toUpperCase().padStart(2,'0')).join(' '))
+            .join('\n')||'Noch keine Datensätze.';
+    }catch(error){el('state').textContent='Status nicht verfügbar: '+error.message;}
+}
+async function poll(){await refresh();setTimeout(poll,2000);}
+poll();
+</script></body></html>)HTML";
+}
+
 // HTTP request handler
 static MHD_Result handle_request(void *cls,
                                  struct MHD_Connection *connection,
@@ -1320,27 +1562,7 @@ static MHD_Result handle_request(void *cls,
         return ret;
     }
     if (config.protocol == PROTOCOL_KM_REMOTE && strcmp(url, "/remote") == 0) {
-        const char* html =
-            "<!doctype html><html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
-            "<title>Vitotrol Remote</title><body><h1>Vitotrol Emulation</h1>"
-            "<p id='state'>Loading…</p><label>Room temperature °C "
-            "<input id='room' type='number' min='-20' max='50' step='0.1'></label>"
-            "<button onclick='send({room_temperature:+document.getElementById(\"room\").value})'>Set</button><br>"
-            "<label>Desired temperature °C <input id='desired' type='number' min='5' max='35' step='1'></label>"
-            "<button onclick='send({desired_room_temperature:+document.getElementById(\"desired\").value})'>Set</button><br>"
-            "<label>Mode <select id='mode'><option value='heat_water'>Heating + hot water</option>"
-            "<option value='water'>Hot water only</option><option value='off'>Off</option>"
-            "<option value='party_on'>Party on</option><option value='party_off'>Party off</option>"
-            "<option value='economy_on'>Economy on</option><option value='economy_off'>Economy off</option>"
-            "</select></label><button onclick='send({mode:document.getElementById(\"mode\").value})'>Apply</button>"
-            "<script>const stateEl=document.getElementById('state'),roomEl=document.getElementById('room'),"
-            "desiredEl=document.getElementById('desired'),modeEl=document.getElementById('mode');"
-            "async function refresh(){let d=await(await fetch('api/remote')).json();"
-            "stateEl.textContent=d.model+' / slot '+d.slot+' / '+(d.online?'Online':'Waiting for KM1');"
-            "roomEl.value=d.room_temperature;desiredEl.value=d.desired_room_temperature;}"
-            "async function send(v){let r=await fetch('api/remote',{method:'POST',headers:{'Content-Type':'application/json'},"
-            "body:JSON.stringify(v)});let d=await r.json();if(!r.ok)alert(d.error);refresh();}"
-            "refresh();setInterval(refresh,3000);</script></body></html>";
+        const char* html = getRemoteHTML();
         response = MHD_create_response_from_buffer(strlen(html), (void*)html, MHD_RESPMEM_PERSISTENT);
         if (!response) return MHD_NO;
         MHD_add_response_header(response, "Content-Type", "text/html; charset=utf-8");
@@ -1435,6 +1657,12 @@ void printHelp(const char* progname) {
     printf("  -i <invert>    Invert serial signals: true, false (default: false)\n");
     printf("  -w <port>      Web server port (default: 8099)\n");
     printf("  -h             Show this help\n");
+}
+
+static void requestCompleted(void*, MHD_Connection*, void** context,
+                             enum MHD_RequestTerminationCode) {
+    delete static_cast<RemotePostData*>(*context);
+    *context = nullptr;
 }
 
 int main(int argc, char* argv[]) {
@@ -1537,6 +1765,7 @@ int main(int argc, char* argv[]) {
                              config.webPort,
                              NULL, NULL,
                              &handle_request, NULL,
+                             MHD_OPTION_NOTIFY_COMPLETED, &requestCompleted, NULL,
                              MHD_OPTION_END);
 
     if (daemon == NULL) {
@@ -1601,7 +1830,12 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        usleep(LOOP_DELAY_US);  // 10ms delay
+        if (config.protocol == PROTOCOL_KM_REMOTE && serialConnected) {
+            // Wake on RX instead of imposing a fixed delay on every slave response.
+            vbusSerial.waitForData(10);
+        } else {
+            usleep(LOOP_DELAY_US);
+        }
     }
 
     // Cleanup

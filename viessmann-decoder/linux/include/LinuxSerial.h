@@ -32,6 +32,7 @@ public:
     
     // Additional methods
     bool isOpen() const { return fd >= 0; }
+    void waitForData(int timeoutMs);
     // Configure before serial processing starts; reports logical bytes after RX/before TX inversion.
     using TrafficCallback = void (*)(bool transmitted, const uint8_t* data, size_t size);
     void setTrafficCallback(TrafficCallback callback) { trafficCallback = callback; }

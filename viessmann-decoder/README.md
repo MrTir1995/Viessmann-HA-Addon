@@ -197,7 +197,23 @@ The serial port configuration.
 
 ### KM-Bus Vitotrol emulation (experimental)
 
-Select protocol `km_remote`, model `vitotrol300`, and the heating-circuit slot (usually 1). The add-on uses 1200 baud, 8E1, and an FC722-based M-Bus slave USB interface. The web interface exposes room-temperature input, desired room temperature, and basic operating-mode commands; read-only data is available at `/api/remote`.
+Select protocol `km_remote`, model `vitotrol300`, and the heating-circuit slot (usually 1). The add-on uses 1200 baud, 8E1, and an FC722-based M-Bus slave USB interface.
+
+Der Dashboard-Button **Vitotrol-Steuerung** öffnet `/remote`. Dort lassen sich
+Raum-Isttemperatur, normale und reduzierte Raum-Solltemperatur, Betriebsart,
+Party- und Sparbetrieb vorgeben. Steuerwerte sind lokale Vorgaben, keine
+Bestätigung durch die Regelung. Mehrere API-Vorgaben werden atomar übernommen;
+ungültige Werte oder eine volle Warteschlange führen zu keiner Teiländerung.
+
+Die Live-Anzeige zeigt empfangene, XOR-dekodierte Datensätze mit Alter,
+belegte Außentemperatur-/Heizfreigabefelder und Diagnosezähler. Die Laufzeitprofile
+**WiFiVitotrol** und **OpenV** machen widersprüchliche Quellenangaben zu
+Schreibquittierungen und Heizkreis-Datensätzen wählbar, statt sie als universell
+korrekt auszugeben. Das Profil wird bei Neustart/Neuverbinden zurückgesetzt.
+API und genaue Grenzen: [KM-Bus-Protokollbeschreibung](../doc/KM_BUS_VITOTROL.md).
+Für nicht belegte Speicher-/Zeitprogramm-/Datumskommandos werden keine
+Telegramme erfunden; insbesondere sind KW-/Optolink-Speicheradressen nicht
+direkt auf KM-Bus-Slaveregister übertragbar.
 
 This is an experimental implementation based on OpenV KM-Bus observations and the public WiFiVitotrol project. Those protocol observations primarily target a Vitotronic 200 KW2, so compatibility with the Vitotronic 200 KM1 and all Vitotrol 300 functions is not guaranteed. The Linux add-on cannot guarantee the strict response timing a physical remote provides. Verify the adapter and operation on your exact controller, preferably with passive bus captures, before relying on control commands. KM-Bus wiring can damage the heating controller; use an isolated bus interface and consult a qualified installer.
 

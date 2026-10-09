@@ -25,17 +25,116 @@ The Vitotrol 300 ID profile uses class `0x11`, model byte `0x38`, and the report
 
 ## Current implementation scope
 
-The slave validates incoming CRC-16/Kermit frames and handles master ping, single/multiple register reads, register writes, and dataset writes. It reports its ID through the documented `0xF8` register range, returns PONG for supported master writes, and sends queued remote datasets only when granted the bus by a master ping. It never initiates a telegram without a master request.
+The slave validates incoming CRC-16/Kermit frames and command-specific lengths.
+An inter-byte timeout and resynchronisation recover from truncated or corrupt
+traffic. It handles master ping, single/multiple register reads, both documented
+multiple-write layouts, dataset writes and short dataset requests. Reads are
+bounded by the one-byte telegram length (at most 123 address/value pairs) and
+cannot wrap around the 256-byte register bank. ID registers `0xF8`–`0xFB` are
+read-only; other virtual registers are not a map of the controller's memory.
+
+Room temperature is initially 20 °C, transmitted in signed little-endian tenths
+of a degree, not zero. Commands are queued atomically: an invalid value or full
+queue changes neither local values nor the queue. Register and dataset responses
+are sent only in response to addressed master telegrams. Broadcast updates are
+accepted without transmitting an acknowledgement. Blocking serial drain calls
+are avoided; the Linux loop wakes on received bytes rather than imposing a
+fixed 10 ms delay. This reduces latency but is **not** an actual real-time guarantee.
+Timeouts use a monotonic clock rather than wall time. An incomplete/nonblocking
+write retains its offset and is retried without busy-waiting, but its remaining
+bytes are abandoned if new RX traffic arrives or after 500 ms. The queued
+command remains available for a later master grant. That 500 ms limit is a
+transport recovery safeguard, **not** a sourced KM-Bus response deadline.
+
+### Source variants
+
+The sources disagree and are not manufacturer specifications. The `/remote`
+page and API allow selecting a runtime `profile`:
+
+| Behaviour | `wifi` (default) | `openv` |
+| --- | --- | --- |
+| Unicast master write acknowledgement | PONG, matching WiFiVitotrol | Silent, matching OpenV |
+| Virtual register `0x00` | `0x12` | `0x00` |
+| Vitotrol 300 ID bytes | `11 38 00 11` | `11 38 00 05` |
+| Room-temperature dataset | `0x20` | `0x1F + slot` |
+| Normal/reduced temperature command dataset | `0x15` | `0x14 + slot` |
+| Operating-mode command dataset | `0x14` | `0x14` |
+| Long `0x3F` telegram | Dataset reception, including WiFiVitotrol's `0x34` wrapper | Not treated as a dataset write |
+
+The OpenV circuit-to-dataset mapping is a hypothesis in its documentation,
+not a confirmed mapping for every device. Use the profile that matches a
+capture of the target controller. Profile changes migrate waiting temperature
+commands; they do not persist across restart or serial reconnection.
+Both profiles handle a short `0x3F` dataset read, returning only an available
+locally generated dataset. They never echo master status data back as a remote
+response. Unknown datasets/commands are not answered with fabricated data.
+
+Both raw address/value pairs (OpenV) and count-prefixed pairs (WiFiVitotrol) in
+`0xB3` writes are recognised by their distinct lengths. Malformed writes do not
+partially update registers. `0x1D` is a **dataset identifier**, not a command.
+Only dataset data after the identifier is XOR-encoded with `0xAA`; register
+traffic, telegram headers and CRC bytes are not globally XOR-encoded.
+
+Implementation references:
+[WiFiVitotrol message handling](https://github.com/dumpfheimer/WiFiVitotrol/blob/master/software/src/messageHandler.cpp),
+[temperature encoding](https://github.com/dumpfheimer/WiFiVitotrol/blob/master/software/src/dataPerparators.cpp),
+[outside temperature/heating flag](https://github.com/dumpfheimer/WiFiVitotrol/blob/master/software/src/dataset.cpp),
+and [public mode telegram examples](https://github.com/boblegal31/Heater-remote/blob/master/NetRemote/example/inc/ViessMann.h).
+These are protocol references, not code incorporated into this add-on.
 
 The web page is `/remote`; the read API is `GET /api/remote`. `POST /api/remote` accepts JSON containing one or more of:
 
 ```json
 {"room_temperature": 20.5}
 {"desired_room_temperature": 21}
+{"reduced_room_temperature": 16}
 {"mode": "heat_water"}
+{"profile": "openv"}
 ```
 
-Supported `mode` values are `off`, `water`, `heat_water`, `party_on`, `party_off`, `economy_on`, and `economy_off`. The current-room temperature is sent as a room-temperature dataset; requested setpoints and modes are queued for master-granted transmission. These are the limited controls for which the references contain examples, not a complete Vitotrol 300 feature set. In particular, schedules, every heating-circuit setting, and all controller status fields are not implemented or verified.
+Supported `mode` values are `off`, `water`, `heat_water`, `party_on`, `party_off`,
+`economy_on`, and `economy_off`. Party/economy requests do not overwrite the base
+operating mode. Normal (`0xCD`) and reduced (`0xCE`) setpoints are integral degrees,
+5–35 °C; current room temperature allows tenths, −20–50 °C. The reduced command
+is identified in WiFiVitotrol's temperature-encoding comments and still needs
+verification on the target heater. Several fields can be sent in one JSON object;
+the update is all-or-nothing. Unknown/duplicate fields and malformed JSON are
+rejected. The queue is limited, and commands wait for a master ping.
+
+`GET /api/remote` preserves existing fields and adds `profile`,
+`reduced_room_temperature`, `requested_party_mode`, `requested_economy_mode`,
+`pending_commands`, `crc_errors`, `malformed_frames`, `unknown_commands`,
+`outside_temperature`, `heating_enabled`, and `datasets`. Each received dataset
+has `id`, XOR-decoded `data` bytes and `age_ms`. Missing interpreted measurements
+are `null`, not a fabricated zero. Outside temperature and the heating-enable
+flag use the WiFiVitotrol interpretation of the circuit status dataset; other
+fields remain raw because their layout is insufficiently established. These
+received measurements must be distinguished from local requested controls.
+
+WiFiVitotrol's raw dataset storage also includes identifiers outside OpenV's
+`0x10`–`0x22` tables (examples include `0xAD` and `0xBE`). The `wifi` profile
+retains identifiers `0x00`–`0xFD`, including wrapped dataset updates, with at
+most 29 decoded bytes per dataset. This is bounded raw storage, not permission
+to send arbitrary commands or a claim that their contents are understood.
+
+The German `/remote` UI exposes all these controls and received datasets, updates
+every two seconds and preserves unsent form edits. It is linked from the
+dashboard in `km_remote` mode and uses relative paths for Home Assistant Ingress.
+
+### Deliberately unsupported operations
+
+The [OpenV address tables](https://github.com/openv/openv/wiki/Adressen) describe
+Optolink/KW controller memory, not a directly accessible KM-Bus remote register
+space. Addresses such as `0x2301`, `0x3306`, `0x0896` or `0x7507` must not be
+truncated to a byte or inserted into remote frames. The sources do not establish
+a complete conversion between these addresses and KM-Bus datasets.
+
+Schedules, clock/date updates, arbitrary controller-memory access, all other
+temperature/error/status fields and an adjustable party temperature are not
+implemented from incomplete or opaque examples. A list of command codes alone
+does not establish the required payload. This is still not a complete Vitotrol
+300 replacement. The UART stays at **1200 8E1**, as both OpenV and WiFiVitotrol
+specify; the supplied sources do not justify changing it to 8E2.
 
 ## Validation on a KM1
 

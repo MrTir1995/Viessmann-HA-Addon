@@ -1,0 +1,40 @@
+{
+  "title": "Viessmann Decoder",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Viessmann Decoder",
+        "description": "Enter the decoder's base URL, for example http://192.168.1.50:8099 (without /data). The integration only reads data; it never changes decoder settings.",
+        "data": {"url": "Decoder URL"}
+      }
+    },
+    "error": {
+      "invalid_url": "Enter a valid HTTP or HTTPS base URL without credentials, query parameters or a fragment.",
+      "cannot_connect": "Cannot connect to the decoder. Check the URL and network connection.",
+      "invalid_response": "The server did not return valid Viessmann Decoder data."
+    },
+    "abort": {"already_configured": "This decoder URL is already configured."}
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {"name": "Temperature {channel}"},
+      "pump": {"name": "Pump {channel} speed"},
+      "status": {"name": "Status"},
+      "protocol": {"name": "Protocol"},
+      "serial_port": {"name": "Serial port"},
+      "remote_room_temperature": {"name": "Room temperature"},
+      "remote_desired_room_temperature": {"name": "Desired room temperature"},
+      "remote_mode": {"name": "Remote operating mode"},
+      "remote_slot": {"name": "Remote slot"},
+      "remote_model": {"name": "Remote model"},
+      "remote_last_master_dataset": {"name": "Last master dataset"}
+    },
+    "binary_sensor": {
+      "relay": {"name": "Relay {channel}"},
+      "serial_connection": {"name": "Serial connection"},
+      "data_ready": {"name": "Data ready"},
+      "compatibility": {"name": "Device compatible"},
+      "remote_online": {"name": "Remote online"}
+    }
+  }
+}

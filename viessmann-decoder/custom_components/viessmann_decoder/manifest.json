@@ -3,7 +3,8 @@
   "name": "Viessmann Decoder",
   "version": "1.0.0",
   "config_flow": true,
-  "documentation": "https://github.com/d0nkarnage/Viessmann-HA-Addon",
+  "documentation": "https://github.com/MrTir1995/Viessmann-HA-Addon",
+  "codeowners": [],
   "iot_class": "local_polling",
   "requirements": []
 }

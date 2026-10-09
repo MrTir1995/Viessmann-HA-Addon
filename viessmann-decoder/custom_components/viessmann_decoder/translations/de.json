@@ -1,0 +1,40 @@
+{
+  "title": "Viessmann Decoder",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit Viessmann Decoder verbinden",
+        "description": "Gib die Basis-URL des Decoders ein, zum Beispiel http://192.168.1.50:8099 (ohne /data). Die Integration liest nur Daten und ändert keine Decoder-Einstellungen.",
+        "data": {"url": "Decoder-URL"}
+      }
+    },
+    "error": {
+      "invalid_url": "Gib eine gültige HTTP- oder HTTPS-Basis-URL ohne Zugangsdaten, Abfrageparameter oder Fragment ein.",
+      "cannot_connect": "Keine Verbindung zum Decoder. Prüfe die URL und die Netzwerkverbindung.",
+      "invalid_response": "Der Server hat keine gültigen Viessmann-Decoder-Daten geliefert."
+    },
+    "abort": {"already_configured": "Diese Decoder-URL ist bereits eingerichtet."}
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {"name": "Temperatur {channel}"},
+      "pump": {"name": "Drehzahl Pumpe {channel}"},
+      "status": {"name": "Status"},
+      "protocol": {"name": "Protokoll"},
+      "serial_port": {"name": "Serielle Schnittstelle"},
+      "remote_room_temperature": {"name": "Raumtemperatur"},
+      "remote_desired_room_temperature": {"name": "Raumsolltemperatur"},
+      "remote_mode": {"name": "Betriebsart Fernbedienung"},
+      "remote_slot": {"name": "Steckplatz Fernbedienung"},
+      "remote_model": {"name": "Modell Fernbedienung"},
+      "remote_last_master_dataset": {"name": "Letzter Master-Datensatz"}
+    },
+    "binary_sensor": {
+      "relay": {"name": "Relais {channel}"},
+      "serial_connection": {"name": "Serielle Verbindung"},
+      "data_ready": {"name": "Daten bereit"},
+      "compatibility": {"name": "Gerät kompatibel"},
+      "remote_online": {"name": "Fernbedienung online"}
+    }
+  }
+}

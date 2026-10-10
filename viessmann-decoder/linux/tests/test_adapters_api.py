@@ -227,8 +227,12 @@ class AdapterApiTests(unittest.TestCase):
                     if route == "/":
                         self.assertIn(b"Add Serial Adapter", page)
                         self.assertNotIn(b"<span>Add Device</span>", page)
+                        self.assertIn(b"KM-Bus register data", page)
+                        self.assertIn(b"d.kmBus.mode", page)
+                        self.assertIn(b"Boolean(p)", page)
                     elif route in ["/settings", "/devices"]:
                         self.assertIn(b'id="adapter-settings-add"', page)
+                        self.assertIn(b"id='themeToggle'", page)
 
     def test_primary_settings_reject_invalid_json_without_persistence(self):
         settings = self.options(self.primary_port)
@@ -272,15 +276,24 @@ class AdapterApiTests(unittest.TestCase):
         self.assertEqual(self.state(base + "/data")["serialPort"], str(alias))
 
     def test_primary_ui_settings_reload_on_native_restart(self):
-        settings = self.options(self.primary_port, remote_model="vitotrol200", remote_slot=3)
-        settings.pop("serial_port")
+        replacement_master, replacement_port = self.new_pty()
+        settings = self.options(replacement_port, remote_model="vitotrol200", remote_slot=3)
+        settings.update(log_level="debug", usbip_enable=True, usbip_host="192.0.2.4",
+                        usbip_busid="1-2.3", usbip_port=3241)
         self.assertEqual(self.request("/api/settings", settings)[0], 200)
         self.assertEqual(self.state("/api/settings")["remote_slot"], 1)
         self.stop_process()
         self.start()
         self.assertEqual(self.state("/api/settings")["remote_model"], "vitotrol200")
         self.assertEqual(self.state("/api/settings")["remote_slot"], 3)
-        self.exchange(self.primary_master, slot=3)
+        settings = self.state("/api/settings")
+        self.assertEqual(settings["serial_port"], replacement_port)
+        self.assertEqual(settings["log_level"], "debug")
+        self.assertTrue(settings["usbip_enable"])
+        self.assertEqual(settings["usbip_host"], "192.0.2.4")
+        self.assertEqual(settings["usbip_busid"], "1-2.3")
+        self.assertEqual(settings["usbip_port"], 3241)
+        self.exchange(replacement_master, slot=3)
 
     def test_bad_values_and_duplicate_device_aliases(self):
         master, port = self.new_pty()
@@ -343,8 +356,10 @@ class AdapterApiTests(unittest.TestCase):
         self.assertIn(b"<option value='2400'>2400</option>", extra_html)
         self.assertIn(b"<option value='57600'>57600</option>", primary_html)
         self.assertIn(b"<option value='2400'>2400</option>", primary_html)
-        self.assertIn(f"value='{self.primary_port}' readonly".encode(), primary_html)
-        self.assertNotIn(f"value='{port}' readonly".encode(), extra_html)
+        self.assertIn(f"value='{self.primary_port}' required pattern='/dev/.+'".encode(), primary_html)
+        self.assertIn(b"name='usbip_enable'", primary_html)
+        self.assertIn(b"name='log_level'", primary_html)
+        self.assertNotIn(b"name='usbip_enable'", extra_html)
         changed = self.options(replacement_port)
         self.assertEqual(self.request(base + "/api/settings", changed)[0], 200)
         self.assertEqual(self.state("/api/settings"), primary_settings)

@@ -89,6 +89,17 @@ Bytes protocolFrame(ProtocolType protocol) {
     return frame;
 }
 
+Bytes kmStatusFrame() {
+    Bytes frame = {0x68, 15, 15, 0x68, 0xBF, 1, 1, 0x1C};
+    const Bytes decoded = {0x04, 0x00, 40, 50, 60, 0x00, 20, 0xC0, 80, 0x00, 0x84};
+    for (uint8_t byte : decoded) frame.push_back(byte ^ KMBUS_XOR_MASK);
+    const uint16_t crc = kmCRC(frame, 4, 15);
+    frame.push_back(static_cast<uint8_t>(crc));
+    frame.push_back(static_cast<uint8_t>(crc >> 8));
+    frame.push_back(0x16);
+    return frame;
+}
+
 void drain(VBUSDecoder& decoder, FakeStream& stream) {
     for (unsigned i = 0; i < 600 && stream.available(); ++i) decoder.loop();
     CHECK(stream.available() == 0);
@@ -297,6 +308,32 @@ void negativeReadsDoNotBecomeData() {
         CHECK(decoder.isReady() && decoder.getVbusStat());
     }
 }
+
+void kmStatusRegisterConversions() {
+    FakeStream stream;
+    VBUSDecoder decoder(&stream);
+    decoder.begin(PROTOCOL_KM);
+    stream.feed(kmStatusFrame());
+    drain(decoder, stream);
+
+    CHECK(decoder.isReady());
+    CHECK(decoder.getTempNum() == 5);
+    CHECK(decoder.getTemp(0) == 20.0f);
+    CHECK(decoder.getTemp(1) == 25.0f);
+    CHECK(decoder.getTemp(2) == 10.0f);
+    CHECK(decoder.getTemp(3) == 30.0f);
+    CHECK(decoder.getTemp(4) == 40.0f);
+    CHECK(decoder.getPump(0) == 100 && decoder.getPump(1) == 100);
+    CHECK(decoder.getRelay(0));
+    CHECK(decoder.getKMBusMode() == KMBUS_MODE_DAY);
+    CHECK(decoder.getKMBusBoilerTemp() == 20.0f);
+    CHECK(decoder.getKMBusHotWaterTemp() == 25.0f);
+    CHECK(decoder.getKMBusOutdoorTemp() == 10.0f);
+    CHECK(decoder.getKMBusSetpointTemp() == 30.0f);
+    CHECK(decoder.getKMBusDepartureTemp() == 40.0f);
+    CHECK(decoder.getKMBusMainPumpStatus() && decoder.getKMBusLoopPumpStatus());
+    CHECK(decoder.getKMBusBurnerStatus());
+}
 }
 
 unsigned long millis() { return clockMillis; }
@@ -312,6 +349,7 @@ int main() {
         {"optional device frames never reuse old data", optionalDeviceFramesDoNotReuseOldData},
         {"queued frames and buffer bounds", queuedFramesAndBounds},
         {"negative reads do not become data", negativeReadsDoNotBecomeData},
+        {"KM status register conversions", kmStatusRegisterConversions},
     };
     unsigned failed = 0;
     for (const Test& test : tests) {

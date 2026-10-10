@@ -591,6 +591,13 @@ char* generateDataJSON() {
     JSON_APPEND("]");
     const std::string participants = busParticipantsJSON(decoder);
     JSON_APPEND(",\"participants\":%s", participants.c_str());
+    if (config.protocol == PROTOCOL_KM) {
+        JSON_APPEND(",\"kmBus\":{\"mode\":%u,\"burner\":%s,\"mainPump\":%s,\"loopPump\":%s}",
+                    decoder->getKMBusMode(),
+                    decoder->getKMBusBurnerStatus() ? "true" : "false",
+                    decoder->getKMBusMainPumpStatus() ? "true" : "false",
+                    decoder->getKMBusLoopPumpStatus() ? "true" : "false");
+    }
 
     pthread_mutex_unlock(&data_mutex);
 
@@ -1030,6 +1037,71 @@ bool validAdapterConfig(const JsonFields& fields, Config& options, std::string& 
     return true;
 }
 
+struct StartupSettings {
+    std::string logLevel = "info";
+    std::string usbipHost;
+    std::string usbipBusId;
+    bool usbipEnabled = false;
+    unsigned long usbipPort = 3240;
+};
+
+StartupSettings startupSettingsFromEnvironment() {
+    StartupSettings settings;
+    if (const char* value = getenv("LOG_LEVEL")) settings.logLevel = value;
+    if (const char* value = getenv("USBIP_HOST")) settings.usbipHost = value;
+    if (const char* value = getenv("USBIP_BUSID")) settings.usbipBusId = value;
+    if (const char* value = getenv("USBIP_ENABLE")) settings.usbipEnabled = strcmp(value, "true") == 0;
+    if (const char* value = getenv("USBIP_PORT")) settings.usbipPort = strtoul(value, nullptr, 10);
+    return settings;
+}
+
+bool validStartupSettings(const JsonFields& fields, StartupSettings& settings) {
+    static const std::unordered_set<std::string> keys = {
+        "log_level", "usbip_enable", "usbip_host", "usbip_busid", "usbip_port"
+    };
+    for (const auto& field : fields) {
+        if (keys.count(field.first) == 0) continue;
+        if (field.first == "log_level") {
+            if (field.second.type != 's') return false;
+            const auto& value = field.second.value;
+            if (value != "trace" && value != "debug" && value != "info" &&
+                value != "notice" && value != "warning" && value != "error" &&
+                value != "fatal") return false;
+            settings.logLevel = value;
+        } else if (field.first == "usbip_enable") {
+            if (field.second.type != 'b') return false;
+            settings.usbipEnabled = field.second.value == "true";
+        } else if (field.first == "usbip_host" || field.first == "usbip_busid") {
+            if (field.second.type != 's' || field.second.value.size() > 255) return false;
+            for (unsigned char byte : field.second.value)
+                if (byte < 32 || byte == 127) return false;
+            if (field.first == "usbip_host") settings.usbipHost = field.second.value;
+            else settings.usbipBusId = field.second.value;
+        } else if (field.first == "usbip_port") {
+            if (field.second.type != 'n') return false;
+            const unsigned long value = strtoul(field.second.value.c_str(), nullptr, 10);
+            if (value < 1 || value > 65535) return false;
+            settings.usbipPort = value;
+        }
+    }
+    return true;
+}
+
+std::string htmlEscape(const std::string& value) {
+    std::string escaped;
+    for (char byte : value) {
+        switch (byte) {
+            case '&': escaped += "&amp;"; break;
+            case '<': escaped += "&lt;"; break;
+            case '>': escaped += "&gt;"; break;
+            case '"': escaped += "&quot;"; break;
+            case '\'': escaped += "&#39;"; break;
+            default: escaped += byte;
+        }
+    }
+    return escaped;
+}
+
 std::string configJSON(const AdapterContext& adapter, bool saved) {
     const auto& options = saved ? adapter.savedOptions : adapter.options;
     const auto& port = saved ? adapter.savedPort : adapter.port;
@@ -1204,17 +1276,24 @@ MHD_Result handleAdaptersApi(MHD_Connection* connection, const char* method,
 
 bool saveSettings(const std::string& protocol, unsigned long baudRate,
                   const std::string& serialConfig, const std::string& remoteModel,
-                  unsigned int remoteSlot, bool invertSerial) {
-    char body[512];
-    snprintf(body, sizeof(body),
-             "{\"baud_rate\":%lu,\"protocol\":\"%s\",\"serial_config\":\"%s\","
-             "\"remote_model\":\"%s\",\"remote_slot\":%u,\"invert_serial\":%s}\n",
-             baudRate, protocol.c_str(), serialConfig.c_str(), remoteModel.c_str(),
-             remoteSlot, invertSerial ? "true" : "false");
+                  unsigned int remoteSlot, bool invertSerial, const std::string& serialPort,
+                  const StartupSettings& startup) {
+    const std::string body = "{\"baud_rate\":" + std::to_string(baudRate) +
+        ",\"protocol\":" + jsonQuote(protocol) +
+        ",\"serial_config\":" + jsonQuote(serialConfig) +
+        ",\"remote_model\":" + jsonQuote(remoteModel) +
+        ",\"remote_slot\":" + std::to_string(remoteSlot) +
+        ",\"invert_serial\":" + (invertSerial ? "true" : "false") +
+        ",\"serial_port\":" + jsonQuote(serialPort) +
+        ",\"log_level\":" + jsonQuote(startup.logLevel) +
+        ",\"usbip_enable\":" + (startup.usbipEnabled ? "true" : "false") +
+        ",\"usbip_host\":" + jsonQuote(startup.usbipHost) +
+        ",\"usbip_busid\":" + jsonQuote(startup.usbipBusId) +
+        ",\"usbip_port\":" + std::to_string(startup.usbipPort) + "}\n";
     return atomicWrite("ui_settings.json", body);
 }
 
-void loadPrimarySettings(Config& options) {
+void loadPrimarySettings(Config& options, std::string& serialPort) {
     const std::string path = dataDirectory() + "/ui_settings.json";
     FILE* file = fopen(path.c_str(), "r");
     if (!file) return;
@@ -1224,15 +1303,30 @@ void loadPrimarySettings(Config& options) {
     fclose(file);
     JsonFields fields;
     Config saved = options;
-    std::string port = options.serialPort, name = "primary";
-    if (failed || length > 1024 ||
-        !parseConfigObject(std::string(body, length), fields) ||
-        fields.count("serial_port") || fields.count("name") ||
-        !validAdapterConfig(fields, saved, port, name, false)) {
+    StartupSettings startup = startupSettingsFromEnvironment();
+    JsonFields adapterFields;
+    std::string port = serialPort, name = "primary";
+    const bool parsed = !failed && length <= 1024 &&
+        parseConfigObject(std::string(body, length), fields);
+    if (parsed) {
+        adapterFields = fields;
+        for (const char* key : {"log_level", "usbip_enable", "usbip_host", "usbip_busid", "usbip_port"})
+            adapterFields.erase(key);
+    }
+    if (!parsed || fields.count("name") ||
+        !validStartupSettings(fields, startup) ||
+        !validAdapterConfig(adapterFields, saved, port, name, false)) {
         fprintf(stderr, "Ignoring invalid primary UI settings\n");
         return;
     }
     options = saved;
+    serialPort = port;
+    setenv("LOG_LEVEL", startup.logLevel.c_str(), 1);
+    setenv("USBIP_ENABLE", startup.usbipEnabled ? "true" : "false", 1);
+    setenv("USBIP_HOST", startup.usbipHost.c_str(), 1);
+    setenv("USBIP_BUSID", startup.usbipBusId.c_str(), 1);
+    const std::string usbipPort = std::to_string(startup.usbipPort);
+    setenv("USBIP_PORT", usbipPort.c_str(), 1);
 }
 
 MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
@@ -1241,7 +1335,16 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
     if (strcmp(method, "GET") == 0) {
         std::lock_guard<std::mutex> lock(adaptersMutex);
         const auto& adapter = currentAdapter();
-        const std::string body = configJSON(adapter, false);
+        std::string body = configJSON(adapter, false);
+        if (adapter.id == "primary") {
+            const StartupSettings startup = startupSettingsFromEnvironment();
+            body.pop_back();
+            body += ",\"log_level\":" + jsonQuote(startup.logLevel) +
+                    ",\"usbip_enable\":" + (startup.usbipEnabled ? "true" : "false") +
+                    ",\"usbip_host\":" + jsonQuote(startup.usbipHost) +
+                    ",\"usbip_busid\":" + jsonQuote(startup.usbipBusId) +
+                    ",\"usbip_port\":" + std::to_string(startup.usbipPort) + "}";
+        }
         return queueJson(connection, MHD_HTTP_OK, body.c_str());
     }
     if (strcmp(method, "POST") != 0) {
@@ -1308,16 +1411,31 @@ MHD_Result handleSettingsApi(MHD_Connection* connection, const char* method,
     JsonFields fields;
     Config options = currentAdapter().options;
     std::string port = currentAdapter().port, name = currentAdapter().name;
-    const bool valid = parseConfigObject(request->body, fields) &&
-                       !fields.count("serial_port") && !fields.count("name") &&
-                       validAdapterConfig(fields, options, port, name, false);
+    StartupSettings startup = startupSettingsFromEnvironment();
+    JsonFields adapterFields;
+    const bool parsed = parseConfigObject(request->body, fields);
+    if (parsed) {
+        adapterFields = fields;
+        for (const char* key : {"log_level", "usbip_enable", "usbip_host", "usbip_busid", "usbip_port"})
+            adapterFields.erase(key);
+    }
+    const bool valid = parsed && !fields.count("name") &&
+                       validStartupSettings(fields, startup) &&
+                       validAdapterConfig(adapterFields, options, port, name, false);
 
     bool saved = false;
     if (valid) {
+        std::lock_guard<std::mutex> lock(adaptersMutex);
+        if (portReserved(port, &primaryAdapter)) {
+            delete request;
+            *connectionContext = nullptr;
+            return queueJson(connection, MHD_HTTP_CONFLICT,
+                             "{\"error\":\"Serial port already reserved\"}");
+        }
         saved = saveSettings(protocolToken(options.protocol), options.baudRate,
                              serialToken(options.serialConfig),
                              options.remoteModelId == 0x38 ? "vitotrol300" : "vitotrol200",
-                             options.remoteSlot, options.invertSerial);
+                             options.remoteSlot, options.invertSerial, port, startup);
     }
 
     delete request;
@@ -1615,6 +1733,7 @@ const char* getDashboardHTML() {
     "statusText.textContent=d.status;"
     "const protocols=['VBUS','KW-Bus','P300','KM-Bus','KM-Bus Slave'];"
     "protocolText.textContent=protocols[d.protocol]||'Unknown';"
+    "document.getElementById('sensorDataTitle').textContent=d.protocol===3?'KM-Bus register data':'Sensor Data';"
     "if(d.protocol===4){"
     "container.replaceChildren();const state=document.createElement('div');state.className='empty-state';"
     "state.textContent=d.ready?'Vitotrol emulator online. Open Vitotrol-Steuerung for controls and bus data.':'Waiting for KM-Bus master...';"
@@ -1639,7 +1758,8 @@ const char* getDashboardHTML() {
     "d.pumps.forEach((p,i)=>{"
     "html+='<div class=\"sensor-item\">';"
     "html+='<div class=\"sensor-label\">'+(pumpNames[i]||'Pump '+(i+1)+' Power')+'</div>';"
-    "html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%</span></div>';"
+    "if(d.protocol===3){const active=Boolean(p);html+='<div class=\"sensor-value\" style=\"color:'+(active?'var(--success-color)':'var(--disabled-text)')+'\">'+(active?'ON':'OFF')+'</div>';}"
+    "else{html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%</span></div>';}"
     "html+='</div>';"
     "});"
     "}"
@@ -1651,6 +1771,11 @@ const char* getDashboardHTML() {
     "html+='</div>';"
     "});"
     "}"
+    "if(d.protocol===3&&d.kmBus){"
+    "const modes={0:'Off',8:'Night/reduced',132:'Day/normal',198:'Eco',134:'Party'};"
+    "const mode=Number(d.kmBus.mode);"
+    "html+='<div class=\"sensor-item\"><div class=\"sensor-label\">Operating mode</div><div class=\"sensor-value\">'+"
+    "(modes[mode]||'Unknown')+' <span class=\"sensor-unit\">0x'+mode.toString(16).toUpperCase().padStart(2,'0')+'</span></div></div>';}"
     "container.innerHTML=html;"
     "}).catch(err=>{"
     "console.error('Error fetching data:',err);"
@@ -1702,7 +1827,7 @@ const char* getDashboardHTML() {
     "</div>"
     "<div class='card'>"
     "<div class='card-header'>"
-    "<div class='card-title'>Sensor Data</div>"
+    "<div class='card-title' id='sensorDataTitle'>Sensor Data</div>"
     "</div>"
     "<div class='card-content'>"
     "<div id='sensorData' class='sensor-grid'>"
@@ -1830,11 +1955,41 @@ const char* getStatusHTML() {
 std::string getSettingsHTML() {
     const auto& config = currentAdapter().options;
     const bool primary = currentAdapter().id == "primary";
+    const StartupSettings startup = startupSettingsFromEnvironment();
+    const std::string serialPort = htmlEscape(currentAdapter().port);
     const std::string additionalBaudOption = std::string(
         (config.baudRate == 2400 ? "<option value='2400' selected>2400</option>" :
                                   "<option value='2400'>2400</option>")) +
         (config.baudRate == 57600 ? "<option value='57600' selected>57600</option>" :
                                    "<option value='57600'>57600</option>");
+    std::string globalSettingsHtml;
+    if (primary) {
+        const char* logLevels[] = {"trace", "debug", "info", "notice", "warning", "error", "fatal"};
+        globalSettingsHtml =
+            "<div class='card-header'><div class='card-title'>Container Settings</div></div>"
+            "<div class='form-group'><label class='form-label' for='log_level'>Log Level</label>"
+            "<select class='form-select' name='log_level' id='log_level'>";
+        for (const char* level : logLevels) {
+            globalSettingsHtml += "<option value='" + std::string(level) + "'";
+            if (startup.logLevel == level) globalSettingsHtml += " selected";
+            globalSettingsHtml += ">" + std::string(level) + "</option>";
+        }
+        globalSettingsHtml +=
+            "</select></div><div class='form-group'><label class='form-label'>"
+            "<input type='checkbox' name='usbip_enable'";
+        if (startup.usbipEnabled) globalSettingsHtml += " checked";
+        globalSettingsHtml +=
+            "> Enable USB/IP forwarding</label></div>"
+            "<div class='form-group'><label class='form-label' for='usbip_host'>USB/IP Host</label>"
+            "<input class='form-control' name='usbip_host' id='usbip_host' maxlength='255' value='" +
+            htmlEscape(startup.usbipHost) +
+            "'></div><div class='form-group'><label class='form-label' for='usbip_busid'>USB/IP Bus ID</label>"
+            "<input class='form-control' name='usbip_busid' id='usbip_busid' maxlength='255' value='" +
+            htmlEscape(startup.usbipBusId) +
+            "'></div><div class='form-group'><label class='form-label' for='usbip_port'>USB/IP Port</label>"
+            "<input class='form-control' type='number' name='usbip_port' id='usbip_port' min='1' max='65535' value='" +
+            std::to_string(startup.usbipPort) + "'></div>";
+    }
     static thread_local char html[16384];
 
     int written = snprintf(html, sizeof(html) - 1,
@@ -1895,7 +2050,7 @@ std::string getSettingsHTML() {
     "<form id='settingsForm' onsubmit='saveSettings(event)'>"
     "<div class='form-group'>"
     "<label class='form-label'>Serial Port</label>"
-    "<input type='text' class='form-control' name='serial_port' value='%s'%s>"
+    "<input type='text' class='form-control' name='serial_port' value='%s' required pattern='/dev/.+'>"
     "</div>"
     "<div class='form-group'>"
     "<label class='form-label'>Baud Rate</label>"
@@ -1945,6 +2100,7 @@ std::string getSettingsHTML() {
     "<div class='form-group'>"
     "<label class='form-label'><input type='checkbox' name='invert_serial'%s> Invert serial signals</label>"
     "</div>"
+    "%s"
     "<div id='settingsMessage' class='form-group' role='status'>Changes require a container restart.</div>"
     "<div class='button-group'>"
     "<button type='button' class='btn btn-secondary' onclick='window.location.href=\".\"'>Cancel</button>"
@@ -1970,8 +2126,12 @@ std::string getSettingsHTML() {
     "remote_model:settingsForm.elements.remote_model.value,"
     "remote_slot:Number(settingsForm.elements.remote_slot.value),"
     "invert_serial:settingsForm.elements.invert_serial.checked};"
-    "if(!settingsForm.elements.serial_port.readOnly)"
     "values.serial_port=settingsForm.elements.serial_port.value;"
+    "if(settingsForm.elements.log_level){values.log_level=settingsForm.elements.log_level.value;"
+    "values.usbip_enable=settingsForm.elements.usbip_enable.checked;"
+    "values.usbip_host=settingsForm.elements.usbip_host.value;"
+    "values.usbip_busid=settingsForm.elements.usbip_busid.value;"
+    "values.usbip_port=Number(settingsForm.elements.usbip_port.value);}"
     "try{const response=await fetch('api/settings',{method:'POST',"
     "headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});"
     "const result=await response.json();if(!response.ok)throw new Error(result.error);"
@@ -1979,8 +2139,7 @@ std::string getSettingsHTML() {
     "}catch(error){settingsMessage.textContent='Could not save settings: '+error.message;}}"
     "</script>"
     "</body></html>",
-    config.serialPort,
-    primary ? " readonly" : "",
+    serialPort.c_str(),
     config.baudRate == 1200 ? " selected" : "",
     additionalBaudOption.c_str(),
     config.baudRate == 4800 ? " selected" : "",
@@ -2001,7 +2160,8 @@ std::string getSettingsHTML() {
     config.remoteSlot == 1 ? " selected" : "",
     config.remoteSlot == 2 ? " selected" : "",
     config.remoteSlot == 3 ? " selected" : "",
-    config.invertSerial ? " checked" : "");
+    config.invertSerial ? " checked" : "",
+    globalSettingsHtml.c_str());
 
     html[sizeof(html) - 1] = '\0';
     if (written < 0 || written >= (int)(sizeof(html) - 1)) {
@@ -2636,7 +2796,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    loadPrimarySettings(config);
+    primaryAdapter.port = config.serialPort;
+    loadPrimarySettings(config, primaryAdapter.port);
+    config.serialPort = primaryAdapter.port.c_str();
     if (config.protocol == PROTOCOL_KM_REMOTE) {
         config.baudRate = 1200;
         config.serialConfig = SERIAL_8E1;
@@ -2657,8 +2819,6 @@ int main(int argc, char* argv[]) {
     printf("Web Port: %d\n", config.webPort);
     printf("\n");
 
-    primaryAdapter.port = config.serialPort;
-    config.serialPort = primaryAdapter.port.c_str();
     primaryAdapter.savedPort = primaryAdapter.port;
     primaryAdapter.savedOptions = config;
     loadAdapters();

@@ -39,20 +39,26 @@ else
     REMOTE_SLOT="${REMOTE_SLOT:-1}"
     INVERT_SERIAL="${INVERT_SERIAL:-false}"
     LOG_LEVEL="${LOG_LEVEL:-info}"
-    USBIP_ENABLE="false"
-    USBIP_HOST=""
-    USBIP_BUSID=""
-    USBIP_PORT="3240"
+    USBIP_ENABLE="${USBIP_ENABLE:-false}"
+    USBIP_HOST="${USBIP_HOST:-}"
+    USBIP_BUSID="${USBIP_BUSID:-}"
+    USBIP_PORT="${USBIP_PORT:-3240}"
 fi
 
 UI_SETTINGS_FILE="/data/ui_settings.json"
 if [[ -f "${UI_SETTINGS_FILE}" ]]; then
+    SERIAL_PORT=$(jq -r --arg default "${SERIAL_PORT}" '.serial_port // $default' "${UI_SETTINGS_FILE}")
     BAUD_RATE=$(jq -r --arg default "${BAUD_RATE}" '.baud_rate // $default' "${UI_SETTINGS_FILE}")
     PROTOCOL=$(jq -r --arg default "${PROTOCOL}" '.protocol // $default' "${UI_SETTINGS_FILE}")
     SERIAL_CONFIG=$(jq -r --arg default "${SERIAL_CONFIG}" '.serial_config // $default' "${UI_SETTINGS_FILE}")
     REMOTE_MODEL=$(jq -r --arg default "${REMOTE_MODEL}" '.remote_model // $default' "${UI_SETTINGS_FILE}")
     REMOTE_SLOT=$(jq -r --arg default "${REMOTE_SLOT}" '.remote_slot // $default' "${UI_SETTINGS_FILE}")
     INVERT_SERIAL=$(jq -r --arg default "${INVERT_SERIAL}" 'if (.invert_serial | type) == "boolean" then .invert_serial else ($default == "true") end' "${UI_SETTINGS_FILE}")
+    LOG_LEVEL=$(jq -r --arg default "${LOG_LEVEL}" '.log_level // $default' "${UI_SETTINGS_FILE}")
+    USBIP_ENABLE=$(jq -r --argjson default "${USBIP_ENABLE}" 'if (.usbip_enable | type) == "boolean" then .usbip_enable else $default end' "${UI_SETTINGS_FILE}")
+    USBIP_HOST=$(jq -r --arg default "${USBIP_HOST}" '.usbip_host // $default' "${UI_SETTINGS_FILE}")
+    USBIP_BUSID=$(jq -r --arg default "${USBIP_BUSID}" '.usbip_busid // $default' "${UI_SETTINGS_FILE}")
+    USBIP_PORT=$(jq -r --argjson default "${USBIP_PORT}" 'if (.usbip_port | type) == "number" then .usbip_port else $default end' "${UI_SETTINGS_FILE}")
 fi
 
 case "${PROTOCOL}" in
@@ -79,6 +85,18 @@ case "${INVERT_SERIAL}" in
     true|false) ;;
     *) log_error "Invalid INVERT_SERIAL: ${INVERT_SERIAL}"; exit 1 ;;
 esac
+case "${LOG_LEVEL}" in
+    trace|debug|info|notice|warning|error|fatal) ;;
+    *) log_error "Invalid LOG_LEVEL: ${LOG_LEVEL}"; exit 1 ;;
+esac
+case "${USBIP_ENABLE}" in
+    true|false) ;;
+    *) log_error "Invalid USBIP_ENABLE: ${USBIP_ENABLE}"; exit 1 ;;
+esac
+if ! [[ "${USBIP_PORT}" =~ ^[0-9]+$ ]] || (( USBIP_PORT < 1 || USBIP_PORT > 65535 )); then
+    log_error "Invalid USBIP_PORT: ${USBIP_PORT}"
+    exit 1
+fi
 
 log_info "Configuration:"
 log_info "  Serial Port: ${SERIAL_PORT}"
@@ -91,6 +109,7 @@ log_info "  Log Level: ${LOG_LEVEL}"
 log_info "  USB/IP Enabled: ${USBIP_ENABLE}"
 log_info "  USB/IP Host: ${USBIP_HOST}"
 log_info "  USB/IP Bus ID: ${USBIP_BUSID}"
+export LOG_LEVEL USBIP_ENABLE USBIP_HOST USBIP_BUSID USBIP_PORT
 log_info "  USB/IP Port: ${USBIP_PORT}"
 
 if [[ "${USBIP_ENABLE}" == "true" ]]; then

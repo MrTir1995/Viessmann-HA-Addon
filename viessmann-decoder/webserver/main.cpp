@@ -591,6 +591,13 @@ char* generateDataJSON() {
     JSON_APPEND("]");
     const std::string participants = busParticipantsJSON(decoder);
     JSON_APPEND(",\"participants\":%s", participants.c_str());
+    if (config.protocol == PROTOCOL_KM) {
+        JSON_APPEND(",\"kmBus\":{\"mode\":%u,\"burner\":%s,\"mainPump\":%s,\"loopPump\":%s}",
+                    decoder->getKMBusMode(),
+                    decoder->getKMBusBurnerStatus() ? "true" : "false",
+                    decoder->getKMBusMainPumpStatus() ? "true" : "false",
+                    decoder->getKMBusLoopPumpStatus() ? "true" : "false");
+    }
 
     pthread_mutex_unlock(&data_mutex);
 
@@ -1726,6 +1733,7 @@ const char* getDashboardHTML() {
     "statusText.textContent=d.status;"
     "const protocols=['VBUS','KW-Bus','P300','KM-Bus','KM-Bus Slave'];"
     "protocolText.textContent=protocols[d.protocol]||'Unknown';"
+    "document.getElementById('sensorDataTitle').textContent=d.protocol===3?'KM-Bus register data':'Sensor Data';"
     "if(d.protocol===4){"
     "container.replaceChildren();const state=document.createElement('div');state.className='empty-state';"
     "state.textContent=d.ready?'Vitotrol emulator online. Open Vitotrol-Steuerung for controls and bus data.':'Waiting for KM-Bus master...';"
@@ -1750,7 +1758,8 @@ const char* getDashboardHTML() {
     "d.pumps.forEach((p,i)=>{"
     "html+='<div class=\"sensor-item\">';"
     "html+='<div class=\"sensor-label\">'+(pumpNames[i]||'Pump '+(i+1)+' Power')+'</div>';"
-    "html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%</span></div>';"
+    "if(d.protocol===3){const active=Boolean(p);html+='<div class=\"sensor-value\" style=\"color:'+(active?'var(--success-color)':'var(--disabled-text)')+'\">'+(active?'ON':'OFF')+'</div>';}"
+    "else{html+='<div class=\"sensor-value\">'+p+'<span class=\"sensor-unit\">%</span></div>';}"
     "html+='</div>';"
     "});"
     "}"
@@ -1762,6 +1771,11 @@ const char* getDashboardHTML() {
     "html+='</div>';"
     "});"
     "}"
+    "if(d.protocol===3&&d.kmBus){"
+    "const modes={0:'Off',8:'Night/reduced',132:'Day/normal',198:'Eco',134:'Party'};"
+    "const mode=Number(d.kmBus.mode);"
+    "html+='<div class=\"sensor-item\"><div class=\"sensor-label\">Operating mode</div><div class=\"sensor-value\">'+"
+    "(modes[mode]||'Unknown')+' <span class=\"sensor-unit\">0x'+mode.toString(16).toUpperCase().padStart(2,'0')+'</span></div></div>';}"
     "container.innerHTML=html;"
     "}).catch(err=>{"
     "console.error('Error fetching data:',err);"
@@ -1813,7 +1827,7 @@ const char* getDashboardHTML() {
     "</div>"
     "<div class='card'>"
     "<div class='card-header'>"
-    "<div class='card-title'>Sensor Data</div>"
+    "<div class='card-title' id='sensorDataTitle'>Sensor Data</div>"
     "</div>"
     "<div class='card-content'>"
     "<div id='sensorData' class='sensor-grid'>"

@@ -131,6 +131,13 @@ in `compose.yaml` zugeordnet sein; die Weboberfläche kann keine Geräte in den
 Container durchreichen.
 Die Integration legt keine Decoder-Konfiguration an.
 
+Das Dashboard zeigt im KM-Bus-Modus die fünf aus dem Statusdatensatz dekodierten
+Temperaturen (Boiler, Warmwasser, Außen, Soll und Vorlauf) in °C, die Pumpen als
+Ein/Aus-Status und die bekannte Betriebsart mit Rohwert in Hex. Die Temperatur-
+Umrechnung entfernt zuerst die KM-Bus-XOR-Maske und verwendet anschließend
+0,5 °C pro Rohwertschritt; Pumpenstatus wird aus den Statusbits abgeleitet und
+nicht als Prozentleistung ausgegeben.
+
 **Netzwerksicherheit:** Die API und Weboberfläche haben keine Authentifizierung;
 im Vitotrol-Modus sind auch Steuerbefehle möglich, `/settings` kann
 Konfiguration speichern und die API kann einen Container-Neustart anfordern.

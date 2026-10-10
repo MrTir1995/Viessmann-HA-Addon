@@ -227,8 +227,12 @@ class AdapterApiTests(unittest.TestCase):
                     if route == "/":
                         self.assertIn(b"Add Serial Adapter", page)
                         self.assertNotIn(b"<span>Add Device</span>", page)
+                        self.assertIn(b"KM-Bus register data", page)
+                        self.assertIn(b"d.kmBus.mode", page)
+                        self.assertIn(b"Boolean(p)", page)
                     elif route in ["/settings", "/devices"]:
                         self.assertIn(b'id="adapter-settings-add"', page)
+                        self.assertIn(b"id='themeToggle'", page)
 
     def test_primary_settings_reject_invalid_json_without_persistence(self):
         settings = self.options(self.primary_port)
